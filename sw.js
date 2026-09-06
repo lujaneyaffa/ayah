@@ -1,7 +1,7 @@
 /* Ayah service worker — network-first for the shell (so updates flow),
    network-first for Quran.com data + word timings, cache-first for recitation
    audio (offline playback of ayahs you've played), cache fallback everywhere */
-const VERSION = "v32";
+const VERSION = "v33";
 const SHELL_CACHE = `ayah-shell-${VERSION}`;
 const API_CACHE = `ayah-api-${VERSION}`;
 const AUDIO_CACHE = `ayah-audio-${VERSION}`;
@@ -69,29 +69,63 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Recitation audio: cache-first so played ayahs replay offline.
-  // Entries are FULL bodies stored under a Range-less request; when the
-  // <audio> element later asks with a Range header, cache.match() returns a
-  // sliced 206 where the browser supports it, or the full 200 otherwise —
-  // both play fine.
+  // Recitation audio: cache-first so played ayahs replay offline. Entries are
+  // stored as FULL bodies under a Range-less request key; Range requests
+  // (which <audio> sends for every chunk of a long recitation, not just on
+  // seek) are sliced from that cached body BY HAND below, because relying on
+  // the Cache API's own automatic Range support is inconsistent across
+  // engines — a plain 200 handed back for a mid-file Range request confuses
+  // the media pipeline and was cutting long ayahs off partway through.
   if (req.method === "GET" && AUDIO_HOSTS.has(url.hostname)) {
     event.respondWith(
       caches.open(AUDIO_CACHE).then(async (cache) => {
-        const hit = await cache.match(req);
-        if (hit) return hit;
-        // Not cached: fetch the complete file (no Range header) so it can be
-        // stored and replayed offline later.
-        const full = await fetch(new Request(req.url, { method: "GET" }));
-        if (full && full.ok && full.status === 200) {
-          await cache.put(new Request(req.url), full.clone()).catch(() => {});
-          const keys = await cache.keys();
-          if (keys.length > AUDIO_MAX_ENTRIES) {
-            for (const k of keys.slice(0, keys.length - AUDIO_MAX_ENTRIES)) {
-              await cache.delete(k);
+        const plainReq = new Request(req.url); // Range-less: stable cache key
+        let full = await cache.match(plainReq);
+        if (!full) {
+          // Not cached: fetch the complete file (no Range header) so it can
+          // be stored and replayed offline later, regardless of what range
+          // this particular request asked for.
+          full = await fetch(plainReq);
+          if (full && full.ok && full.status === 200) {
+            await cache.put(plainReq, full.clone()).catch(() => {});
+            const keys = await cache.keys();
+            if (keys.length > AUDIO_MAX_ENTRIES) {
+              for (const k of keys.slice(0, keys.length - AUDIO_MAX_ENTRIES)) {
+                await cache.delete(k);
+              }
             }
           }
         }
-        return full;
+        if (!full || !full.ok) return full;
+
+        const range = req.headers.get("range");
+        if (!range) return full.clone();
+        const m = /bytes=(\d*)-(\d*)/.exec(range);
+        if (!m || (!m[1] && !m[2])) return full.clone();
+
+        const buf = await full.clone().arrayBuffer();
+        const total = buf.byteLength;
+        let start = m[1] ? parseInt(m[1], 10) : total - parseInt(m[2], 10);
+        let end = m[1] && m[2] ? parseInt(m[2], 10) : total - 1;
+        if (!isFinite(start) || start < 0) start = 0;
+        if (!isFinite(end) || end >= total) end = total - 1;
+        if (start > end || start >= total) {
+          return new Response(null, {
+            status: 416,
+            statusText: "Range Not Satisfiable",
+            headers: { "Content-Range": `bytes */${total}` }
+          });
+        }
+
+        const headers = new Headers(full.headers);
+        headers.set("Content-Range", `bytes ${start}-${end}/${total}`);
+        headers.set("Content-Length", String(end - start + 1));
+        headers.set("Accept-Ranges", "bytes");
+        return new Response(buf.slice(start, end + 1), {
+          status: 206,
+          statusText: "Partial Content",
+          headers
+        });
       })
     );
     return;

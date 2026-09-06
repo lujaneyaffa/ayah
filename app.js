@@ -141,7 +141,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v32"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v33"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -235,6 +235,9 @@ const state = {
   repeat: Number(loadJSON(LS_REPEAT, 1)),
   loop: normalizeLoop(loadJSON(LS_LOOP, null)),
   repeatCount: 0,
+  wantPlaying: false, // user/setting intent to be playing — the single source
+                       // of truth for Play/Pause, so a Pause click always wins
+                       // even mid repeat-restart or while the next verse loads
   speed: Number(loadJSON(LS_SPEED, 1)),
   display: loadJSON(LS_DISPLAY, ["en"]),
   tafsirCache: loadJSON(LS_TAFSIRCACHE, {}),
@@ -726,32 +729,27 @@ async function refreshAudio(key) {
   loadWordTiming(key).catch(() => {}); // fire-and-forget; highlight data for this verse
   btn.disabled = true;
   dom.audioFill.style.width = "0%";
-  const currentSrc = dom.audioEl.src;
-  const wasPlaying = !dom.audioEl.paused && !dom.audioEl.ended && currentSrc;
   try {
     const url = await loadAudioUrl(key, state.reciterId);
     btn.dataset.url = url;
     btn.disabled = false;
     btn.title = "Play verse recitation";
-    if (wasPlaying) {
-      // Navigating to a new verse while audio plays: keep the flow going
+    // Settings-driven autoplay counts as intent too, unless the user already
+    // paused (state.wantPlaying may have gone false while this was loading).
+    if (state.autoPlay || loopActive()) state.wantPlaying = true;
+    // Re-check LIVE intent (not a snapshot from before this await) so a Pause
+    // click during the fetch always wins over a stale "keep playing" decision.
+    if (state.wantPlaying) {
       dom.audioEl.src = url;
       dom.audioEl.playbackRate = state.speed;
-      dom.audioEl.play().catch(() => {});
-      dom.playIcon.style.display = "none";
-      dom.pauseIcon.style.display = "";
-    } else if (state.autoPlay || loopActive()) {
-      // Auto-play on arrival (the user asked for #1)
-      dom.audioEl.src = url;
-      dom.audioEl.playbackRate = state.speed;
-      dom.audioEl.play().catch(() => {
+      dom.audioEl.play().then(() => {
+        dom.playIcon.style.display = "none";
+        dom.pauseIcon.style.display = "";
+      }).catch(() => {
+        state.wantPlaying = false;
         dom.playIcon.style.display = "";
         dom.pauseIcon.style.display = "none";
       });
-    }
-    if (state.autoPlay || wasPlaying || loopActive()) {
-      dom.playIcon.style.display = "none";
-      dom.pauseIcon.style.display = "";
     }
   } catch {
     btn.dataset.url = "";
@@ -766,19 +764,27 @@ function togglePlay() {
   const el = dom.audioEl;
   const url = dom.btnPlay.dataset.url;
   if (!url) { toast("Audio unavailable offline"); return; }
-  if (!el.src || el.paused) {
+  // Decide on app-level intent, not el.paused — the element is briefly
+  // "paused" mid repeat-restart and mid verse-change, and a Pause click
+  // landing in that gap must still stop playback, not restart it.
+  if (state.wantPlaying) {
+    state.wantPlaying = false;
+    state.repeatCount = 0;
+    el.pause();
+    dom.playIcon.style.display = "";
+    dom.pauseIcon.style.display = "none";
+  } else {
+    state.wantPlaying = true;
     if (el.src !== url) el.src = url;
     el.playbackRate = state.speed;
     state.repeatCount = 0;
     el.play().then(() => {
       dom.playIcon.style.display = "none";
       dom.pauseIcon.style.display = "";
-    }).catch(() => toast("Playback couldn't start (offline?)"));
-  } else {
-    el.pause();
-    state.repeatCount = 0;
-    dom.playIcon.style.display = "";
-    dom.pauseIcon.style.display = "none";
+    }).catch(() => {
+      state.wantPlaying = false;
+      toast("Playback couldn't start (offline?)");
+    });
   }
 }
 
@@ -1176,6 +1182,7 @@ function wireEvents() {
           ? requestAnimationFrame
           : (cb) => setTimeout(cb, 0);
         raf(() => {
+          if (!state.wantPlaying) return; // user paused during the restart gap
           el.play()
             .then(() => {
               dom.playIcon.style.display = "none";
@@ -1203,6 +1210,7 @@ function wireEvents() {
     if (state.autoPlay) {
       goNext(); // continue to the next ayah (#2)
     } else {
+      state.wantPlaying = false;
       dom.playIcon.style.display = "";
       dom.pauseIcon.style.display = "none";
       dom.audioFill.style.width = "0%";
