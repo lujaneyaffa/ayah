@@ -1350,14 +1350,14 @@ async function checkForUpdates(manual) {
 
 /* ================================================================
    Sync (iPhone <-> Mac) — through your own private GitHub repo.
-   Backend: lugine/ayah-sync (private) → sync.json via the GitHub
+   Backend: lujaneyaffa/ayah-sync (private) → sync.json via the GitHub
    Contents API, authorized by a personal token YOU paste per device.
    The token lives only in each device's localStorage — never in the
    code. Rules: last-write-wins for settings; memorized stars merge
    as a UNION so a star can never be lost. Fails silent, always.
    ================================================================ */
 const GH_API = "https://api.github.com";
-const SYNC_REPO = "lugine/ayah-sync";
+const SYNC_REPO = "lujaneyaffa/ayah-sync";
 const SYNC_FILE = "sync.json";
 let syncSha = null; // last-known blob sha — compare-and-swap for writes
 /* The UNION baseline that stops any device from erasing another device's
@@ -1610,7 +1610,7 @@ async function syncTest() {
     }
     // 2. Can it see the sync repo at all?
     r = await fetch(`${GH_API}/repos/${SYNC_REPO}`, { headers: ghHeaders() });
-    parts.push(r.ok ? "✓ can see lugine/ayah-sync" : `✗ ${r.status} — repo not visible → re-create token & select 'ayah-sync' (not 'ayah')`);
+    parts.push(r.ok ? "✓ can see lujaneyaffa/ayah-sync" : `✗ ${r.status} — repo not visible → re-create token & select 'ayah-sync' (not 'ayah')`);
 
     // 3. Can it read the sync file?
     r = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, { headers: ghHeaders() });

@@ -192,7 +192,7 @@ FakeFetchResponse._body = JSON.stringify({
   const src = CODE;
   check("self-reporting error widget present", src.indexOf("showErrorWidget") !== -1 && src.indexOf("tell Cline") !== -1);
   check("refresh scheduled for next UTC midnight", src.indexOf("refreshAfterDate") !== -1 && src.indexOf("nextUTCMidnight") !== -1);
-  check("tapping widget opens the app", src.indexOf("lugine.github.io/ayah") !== -1);
+  check("tapping widget opens the app", src.indexOf("lujaneyaffa.github.io/ayah") !== -1);
   check("twin marker version", src.indexOf(MARKER) !== -1);
 
   // 7. hardening — a pressed ▶ can never end with "nothing shows up"

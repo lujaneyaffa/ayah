@@ -5,8 +5,8 @@ A **fully self-owned, dependency-free static PWA** — no build step, no Vercel,
 no subscriptions, no v0 credits.
 
 ## Where it lives
-- **Live app:** https://lugine.github.io/ayah/
-- **Source code:** https://github.com/lugine/ayah
+- **Live app:** https://lujaneyaffa.github.io/ayah/
+- **Source code:** https://github.com/lujaneyaffa/ayah
 - **Your local editable copy:** `~/ayah`
 
 ## Edit → ship (repeat whenever you want)
@@ -50,7 +50,7 @@ python3 -m http.server 8137
 ```
 
 ## Put it on your iPhone
-1. Open **https://lugine.github.io/ayah/** in Safari.
+1. Open **https://lujaneyaffa.github.io/ayah/** in Safari.
 2. Tap **Share → Add to Home Screen → Add** — runs full-screen like an app.
 
 ### Real home-screen widget on iPhone (free)
@@ -59,7 +59,7 @@ our widget script and put a **live daily-ayah widget** on your home screen
 (same verse the app shows, Arabic + Saheeh translation, big Western ayah number,
 offline cache, tap opens the app):
 
-1. Open **https://lugine.github.io/ayah/widget-install.html** on your iPhone.
+1. Open **https://lujaneyaffa.github.io/ayah/widget-install.html** on your iPhone.
 2. Follow the 5 steps there (install Scriptable → copy code → paste → add widget).
 
 If `scriptable-widget.js` changes, re-copy the code from the install page and
@@ -98,7 +98,7 @@ you turn on Sync (below).
 
 ## Device sync (iPhone ⇄ Mac)
 Your stars, last-read verse, reciter, repeat and display settings can sync
-between devices through **your own private GitHub repo** (`lugine/ayah-sync`,
+between devices through **your own private GitHub repo** (`lujaneyaffa/ayah-sync`,
 created for this). One-time setup **on each device**:
 
 1. In the app, tap **⚙ Setup** (bottom of the page)
