@@ -198,6 +198,15 @@ main { display: block; }
 /* Memorization check: per-word verdict after comparing a recitation */
 .qword-correct { color: var(--accent); }
 .qword-missed { color: var(--danger); text-decoration: underline wavy; text-underline-offset: 0.15em; }
+.check-page-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.check-page-nav input[type="number"] { text-align: center; }
 .check-controls {
   display: flex;
   align-items: center;

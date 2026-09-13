@@ -164,7 +164,18 @@
         <div class="widget-card">
           <div class="mem-head">
             <h2>Memorization check</h2>
-            <p class="mem-sub">Recite this ayah out loud — it's checked against the text, fully on your device. First check downloads an offline recitation checker (~130MB, once).</p>
+            <p class="mem-sub">Recite a whole page out loud — it's checked live against the text as you go, fully on your device. First check downloads an offline recitation checker (~130MB, once).</p>
+          </div>
+          <div class="check-page-nav">
+            <button class="btn" id="checkPagePrev" aria-label="Previous page">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <span>Page</span>
+            <input type="number" id="checkPageInput" class="miniselect miniselect-narrow" min="1" max="604" aria-label="Mushaf page number" />
+            <span>/ 604</span>
+            <button class="btn" id="checkPageNext" aria-label="Next page">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
           </div>
           <div class="read-head">
             <span class="surah-name" id="checkSurah"></span>

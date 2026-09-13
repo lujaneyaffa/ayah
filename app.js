@@ -130,6 +130,9 @@ const TRANS_ID = 20; // Saheeh International translation
 const LS_MEMORIZED = "ayah.memorized.v1";
 const LS_LAST = "ayah.lastVerse.v1";
 const LS_VERSECACHE = "ayah.verseCache.v1";
+const LS_PAGECACHE = "ayah.pageCache.v1"; // Memorization check works by Mushaf page, not single ayah
+const LS_CHECK_PAGE = "ayah.checkPage.v1";
+const TOTAL_PAGES = 604; // standard Madani Mushaf pagination
 const AUDIO_BASE = "https://verses.quran.com/";
 const LS_RECITER = "ayah.reciter.v1";
 const LS_AUDIOCACHE = "ayah.audioCache.v2"; // v2: invalidates broken mirror URLs cached by older versions
@@ -141,7 +144,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v35"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v36"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -231,7 +234,8 @@ const state = {
   wordTimingCache: loadJSON(LS_WORDTIMING, {}),
   wordTiming: null, // { key, reciterId, segs, prop } — active word-highlight timing
   wordCountFor: 0, // word count of the currently rendered ayah (for fallback timing)
-  checkRefWords: [], // display-form words of the verse shown on the Check tab
+  checkRefWords: [], // display-form words of the page shown on the Check tab
+  checkPage: Math.max(1, Math.min(TOTAL_PAGES, Number(loadJSON(LS_CHECK_PAGE, 1)) || 1)),
   autoPlay: loadJSON(LS_AUTO, false),
   repeat: Number(loadJSON(LS_REPEAT, 1)),
   loop: normalizeLoop(loadJSON(LS_LOOP, null)),
@@ -310,7 +314,10 @@ const dom = {
   checkArabic: $("#checkArabic"),
   checkRecordBtn: $("#checkRecordBtn"),
   checkStatus: $("#checkStatus"),
-  checkResult: $("#checkResult")
+  checkResult: $("#checkResult"),
+  checkPageInput: $("#checkPageInput"),
+  checkPagePrev: $("#checkPagePrev"),
+  checkPageNext: $("#checkPageNext")
 };
 
 /* ---------- Toast helper ---------- */
@@ -371,6 +378,7 @@ function htmlToText(html, cap) {
    Verse data loading (Quran.com API with layered offline fallback)
    ================================================================ */
 const verseCache = loadJSON(LS_VERSECACHE, {});
+const pageCache = loadJSON(LS_PAGECACHE, {});
 
 async function fetchVerse(key) {
   const url = `${API_BASE}/verses/by_key/${key}?translations=${TRANS_ID}&fields=text_imlaei&words=true&word_fields=text_imlaei`;
@@ -600,7 +608,6 @@ async function renderRead() {
   try {
     const data = await loadVerse(key);
     if (token !== readToken) return; // stale response
-    renderCheckVerse(key, data);
     if (data.ar) {
       const words = Array.isArray(data.words) ? data.words : null;
       state.wordCountFor = words ? words.length : 0;
@@ -1090,6 +1097,21 @@ function wireEvents() {
     window.open(`https://quran.com/${state.currentKey}`, "_blank", "noopener");
   });
   if (dom.checkRecordBtn) dom.checkRecordBtn.addEventListener("click", toggleCheckRecording);
+  if (dom.checkPagePrev) dom.checkPagePrev.addEventListener("click", () => goCheckPage(-1));
+  if (dom.checkPageNext) dom.checkPageNext.addEventListener("click", () => goCheckPage(1));
+  if (dom.checkPageInput) {
+    dom.checkPageInput.value = String(state.checkPage);
+    dom.checkPageInput.addEventListener("change", () => {
+      let n = parseInt(dom.checkPageInput.value, 10);
+      if (!isFinite(n) || n < 1) n = 1;
+      if (n > TOTAL_PAGES) n = TOTAL_PAGES;
+      dom.checkPageInput.value = String(n);
+      state.checkPage = n;
+      saveJSON(LS_CHECK_PAGE, n);
+      renderCheckPage(n);
+    });
+    renderCheckPage(state.checkPage);
+  }
 
   // Keyboard arrows for quick reading
   document.addEventListener("keydown", (e) => {
@@ -1996,7 +2018,21 @@ async function resampleTo16k(float32, fromRate) {
 }
 
 const checkRec = { ctx: null, stream: null, node: null, chunks: [], sampleRate: 16000, active: false };
-const CHECK_MAX_SECONDS = 40; // safety cap so a forgotten recording can't grow forever
+const CHECK_MAX_SECONDS = 1200; // 20 min safety cap — a full page can take a few minutes to recite
+const CHECK_PERIODIC_MS = 8000; // how often the in-progress check re-transcribes while reciting
+let checkPeriodicTimer = null;
+let checkPeriodicBusy = false;
+
+// Pure-ish: concatenate the Float32 chunks captured so far. Used both by the
+// final stop-and-check and by each in-progress periodic peek, which must
+// NOT touch checkRec.chunks itself (recording keeps running underneath it).
+function mergeAudioChunks(chunks) {
+  const total = chunks.reduce((a, c) => a + c.length, 0);
+  const merged = new Float32Array(total);
+  let off = 0;
+  for (const c of chunks) { merged.set(c, off); off += c.length; }
+  return merged;
+}
 
 async function startCheckRecording() {
   if (checkRec.active) return;
@@ -2028,44 +2064,96 @@ async function startCheckRecording() {
   checkRec.autoStopTimer = setTimeout(() => {
     if (checkRec.active) runMemorizationCheck();
   }, CHECK_MAX_SECONDS * 1000);
+  // Warm up the model the moment recording starts, so it's likely ready by
+  // the first periodic check instead of only starting the ~130MB download
+  // once the user taps Stop.
+  getAsrPipeline((p) => {
+    if (p.status === "progress" && p.file) {
+      dom.checkStatus.textContent = `Downloading checker (one-time, ~130MB): ${p.file} ${Math.round(p.progress || 0)}%`;
+    }
+  }).catch(() => {});
 }
 
 function stopCheckRecordingRaw() {
   clearTimeout(checkRec.autoStopTimer);
+  clearInterval(checkPeriodicTimer);
   if (!checkRec.active) return null;
   checkRec.active = false;
   checkRec.node.disconnect();
   checkRec.ctx.close().catch(() => {});
   checkRec.stream.getTracks().forEach((t) => t.stop());
-  const total = checkRec.chunks.reduce((a, c) => a + c.length, 0);
-  const merged = new Float32Array(total);
-  let off = 0;
-  for (const c of checkRec.chunks) { merged.set(c, off); off += c.length; }
+  const merged = mergeAudioChunks(checkRec.chunks);
   checkRec.chunks = [];
   return { pcm: merged, sampleRate: checkRec.sampleRate };
 }
 
-function renderCheckVerse(key, data) {
+let checkPageToken = 0;
+
+// Fetch every ayah on a Mushaf page in one call (same word shape loadVerse
+// already uses) and cache it — memorization is naturally page-by-page, not
+// ayah-by-ayah, so the Check tab works on a whole page at once.
+async function loadPage(pageNumber) {
+  const key = String(pageNumber);
+  if (pageCache[key]) return pageCache[key];
+  const url = `${API_BASE}/verses/by_page/${pageNumber}?words=true&word_fields=text_imlaei&fields=text_imlaei`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error("page api " + res.status);
+  const json = await res.json();
+  const verses = (json.verses || []).map((v) => ({ key: v.verse_key, words: wordListFromApi(v.words) }));
+  const data = { pageNumber, verses };
+  pageCache[key] = data;
+  saveJSON(LS_PAGECACHE, pageCache);
+  const keys = Object.keys(pageCache);
+  if (keys.length > 20) { delete pageCache[keys[0]]; saveJSON(LS_PAGECACHE, pageCache); } // pages are heavier than single verses — keep fewer
+  return data;
+}
+
+async function renderCheckPage(pageNumber) {
   if (!dom.checkArabic) return;
-  dom.checkSurah.textContent = surahNameFor(key);
-  dom.checkKey.textContent = key;
-  const words = Array.isArray(data && data.words) ? data.words : null;
+  const token = ++checkPageToken;
+  dom.checkStatus.textContent = "Loading page…";
+  dom.checkResult.hidden = true;
   dom.checkArabic.textContent = "";
-  state.checkRefWords = words ? words.map((w) => w.text) : tokenizeArabic(data && data.ar).map((t) => t);
-  if (words && words.length) {
-    words.forEach((w, i) => {
-      const span = document.createElement("span");
-      span.className = "qword";
-      span.dataset.i = String(i);
-      span.textContent = w.text;
-      dom.checkArabic.appendChild(span);
+  state.checkRefWords = [];
+  try {
+    const data = await loadPage(pageNumber);
+    if (token !== checkPageToken) return; // stale response — user flipped pages again
+    dom.checkKey.textContent = `Page ${pageNumber}`;
+    const firstSurah = data.verses.length ? surahNameFor(data.verses[0].key) : "";
+    const lastSurah = data.verses.length ? surahNameFor(data.verses[data.verses.length - 1].key) : "";
+    dom.checkSurah.textContent = firstSurah === lastSurah ? firstSurah : `${firstSurah} – ${lastSurah}`;
+    const allWords = [];
+    data.verses.forEach((v) => {
+      v.words.forEach((w) => {
+        const span = document.createElement("span");
+        span.className = "qword";
+        span.textContent = w.text;
+        dom.checkArabic.appendChild(span);
+        dom.checkArabic.appendChild(document.createTextNode(" "));
+        allWords.push(w.text);
+      });
+      const badge = document.createElement("span");
+      badge.className = "ayah-badge";
+      badge.textContent = String(parseKey(v.key).ayah);
+      dom.checkArabic.appendChild(badge);
       dom.checkArabic.appendChild(document.createTextNode(" "));
     });
-  } else {
-    dom.checkArabic.textContent = (data && data.ar) || "—";
+    state.checkRefWords = allWords;
+    dom.checkStatus.textContent = "";
+  } catch (err) {
+    if (token !== checkPageToken) return;
+    dom.checkArabic.textContent = "—";
+    dom.checkStatus.textContent = "Couldn't load this page (offline, no saved copy).";
   }
-  dom.checkResult.hidden = true;
-  dom.checkStatus.textContent = "";
+}
+
+function goCheckPage(delta) {
+  const next = Math.max(1, Math.min(TOTAL_PAGES, state.checkPage + delta));
+  if (next === state.checkPage) return;
+  state.checkPage = next;
+  saveJSON(LS_CHECK_PAGE, next);
+  if (dom.checkPageInput) dom.checkPageInput.value = String(next);
+  renderCheckPage(next);
 }
 
 function renderCheckResultWords(alignment) {
@@ -2074,6 +2162,94 @@ function renderCheckResultWords(alignment) {
     span.classList.remove("qword-correct", "qword-missed");
     span.classList.add(alignment.perWord[i] === "said" ? "qword-correct" : "qword-missed");
   });
+}
+
+// Pure: index of the quietest short window near targetIdx, within
+// +/-searchRadius samples. Used to cut long audio on a pause instead of
+// mid-word.
+function findQuietCutIndex(pcm, targetIdx, searchRadius) {
+  const winSize = 800; // 50ms at 16kHz
+  const start = Math.max(0, targetIdx - searchRadius);
+  const end = Math.min(pcm.length - winSize, targetIdx + searchRadius);
+  let bestIdx = targetIdx, bestEnergy = Infinity;
+  for (let i = start; i <= end; i += 400) {
+    let sum = 0;
+    for (let j = i; j < i + winSize; j++) sum += pcm[j] * pcm[j];
+    const energy = sum / winSize;
+    if (energy < bestEnergy) { bestEnergy = energy; bestIdx = i + (winSize >> 1); }
+  }
+  return bestIdx;
+}
+// Pure: split long audio into segments no longer than maxSegmentSec,
+// cutting at the quietest nearby point rather than an arbitrary sample.
+//
+// Whisper's own long-form chunking (chunk_length_s/stride_length_s) merges
+// overlapping windows using the model's timestamp tokens, which this narrow
+// Quran-only fine-tune doesn't generate reliably (return_timestamps mode
+// produces garbage on it) — so its automatic long-form path silently drops
+// or garbles whole phrases. A single-pass call is solid up to a point, but
+// beyond roughly 10s on Quranic recitation specifically (short, repetitive,
+// formulaic phrases like "الرحمن الرحيم" recurring seconds apart) the model
+// tends to drift and skip or repeat-suppress a phrase it just "heard"
+// moments earlier — a known Whisper long-form failure mode. Splitting into
+// short segments ourselves and transcribing each independently avoids both
+// problems; the trade-off is an occasional clipped word right at a segment
+// boundary, which a real reciter's natural pauses make rare in practice.
+function splitAudioForAsr(pcm, sampleRate, maxSegmentSec) {
+  const maxLen = Math.round(maxSegmentSec * sampleRate);
+  if (pcm.length <= maxLen) return [pcm];
+  const segments = [];
+  let start = 0;
+  while (start < pcm.length) {
+    let end = Math.min(pcm.length, start + maxLen);
+    if (end < pcm.length) end = findQuietCutIndex(pcm, end, sampleRate * 2);
+    if (end <= start) end = Math.min(pcm.length, start + maxLen); // safety: never stall
+    segments.push(pcm.slice(start, end));
+    start = end;
+  }
+  return segments;
+}
+
+const ASR_SEGMENT_SECONDS = 8; // see splitAudioForAsr for why this model needs short segments
+
+// Shared by the periodic in-progress peek and the final stop-and-check.
+async function checkAudioAgainstPage(pcm, sampleRate) {
+  const audio16k = await resampleTo16k(pcm, sampleRate);
+  const asr = await getAsrPipeline(() => {});
+  const segments = splitAudioForAsr(audio16k, 16000, ASR_SEGMENT_SECONDS);
+  const texts = [];
+  for (const seg of segments) {
+    if (seg.length < 1600) continue; // <0.1s scrap left over from a cut — skip, avoids hallucinating on near-silence
+    const out = await asr(seg);
+    texts.push(out.text);
+  }
+  const saidWords = tokenizeArabic(texts.join(" "));
+  const refWords = (state.checkRefWords || []).map(normalizeArabicWord);
+  return alignRecitation(refWords, saidWords);
+}
+
+// While reciting, periodically re-transcribe everything said so far and
+// update the highlighting — the closest a non-streaming model can get to
+// "live" feedback. Each tick re-processes the WHOLE recording (Whisper
+// can't pick up where it left off), so on a long page later ticks take
+// longer; the busy-guard just skips a tick rather than piling them up, so
+// it naturally slows down instead of falling behind.
+function startPeriodicChecks() {
+  clearInterval(checkPeriodicTimer);
+  checkPeriodicTimer = setInterval(async () => {
+    if (checkPeriodicBusy || !checkRec.active) return;
+    const merged = mergeAudioChunks(checkRec.chunks);
+    if (merged.length < checkRec.sampleRate * 2) return; // wait for ~2s of audio first
+    checkPeriodicBusy = true;
+    try {
+      const alignment = await checkAudioAgainstPage(merged, checkRec.sampleRate);
+      if (!checkRec.active) return; // stopped while this tick was running
+      renderCheckResultWords(alignment);
+      const pct = Math.round(alignment.accuracy * 100);
+      dom.checkStatus.textContent = `Listening… ${alignment.correct}/${alignment.total} so far (${pct}%)`;
+    } catch { /* transient — the next tick will just try again */ }
+    finally { checkPeriodicBusy = false; }
+  }, CHECK_PERIODIC_MS);
 }
 
 async function runMemorizationCheck() {
@@ -2085,21 +2261,9 @@ async function runMemorizationCheck() {
     return;
   }
   dom.checkRecordBtn.disabled = true;
-  dom.checkStatus.textContent = "Loading recitation checker…";
+  dom.checkStatus.textContent = "Checking your recitation…";
   try {
-    const asr = await getAsrPipeline((p) => {
-      if (p.status === "progress" && p.file) {
-        dom.checkStatus.textContent = `Downloading checker (one-time, ~130MB): ${p.file} ${Math.round(p.progress || 0)}%`;
-      } else if (p.status === "ready" || p.status === "done") {
-        dom.checkStatus.textContent = "Listening…";
-      }
-    });
-    dom.checkStatus.textContent = "Checking your recitation…";
-    const audio16k = await resampleTo16k(rec.pcm, rec.sampleRate);
-    const output = await asr(audio16k);
-    const saidWords = tokenizeArabic(output.text);
-    const refWords = (state.checkRefWords || []).map(normalizeArabicWord);
-    const alignment = alignRecitation(refWords, saidWords);
+    const alignment = await checkAudioAgainstPage(rec.pcm, rec.sampleRate);
     renderCheckResultWords(alignment);
     dom.checkResult.hidden = false;
     const pct = Math.round(alignment.accuracy * 100);
@@ -2124,6 +2288,7 @@ function toggleCheckRecording() {
         dom.checkRecordBtn.classList.add("is-recording");
         dom.checkStatus.textContent = "Listening…";
         dom.checkResult.hidden = true;
+        startPeriodicChecks();
       }
     });
   }

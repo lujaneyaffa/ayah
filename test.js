@@ -311,5 +311,40 @@ console.log("\n--- Integration: verse loading pipeline ---");
   check("recitationVerdict: low accuracy asks to practice again",
     /practice/.test(verdict(0.2)));
 
+  // --- Long-recording audio segmentation (v36, page-based check) ---
+  const findQuietCut = vm.runInContext("findQuietCutIndex", sandbox);
+  const splitAudio = vm.runInContext("splitAudioForAsr", sandbox);
+  const sr = 16000;
+
+  check("splitAudioForAsr: short audio passes through as a single segment", (() => {
+    const pcm = new Float32Array(sr * 5); // 5s, under the 8s segment length
+    const segs = splitAudio(pcm, sr, 8);
+    return segs.length === 1 && segs[0].length === pcm.length;
+  })());
+  check("splitAudioForAsr: long audio is split and covers every sample exactly once", (() => {
+    const pcm = new Float32Array(sr * 20); // 20s
+    for (let i = 0; i < pcm.length; i++) pcm[i] = Math.sin(i); // non-zero so nothing gets silently dropped
+    const segs = splitAudio(pcm, sr, 8);
+    const total = segs.reduce((a, s) => a + s.length, 0);
+    const rejoined = new Float32Array(total);
+    let off = 0;
+    for (const s of segs) { rejoined.set(s, off); off += s.length; }
+    let sameValues = true;
+    for (let i = 0; i < pcm.length; i++) { if (rejoined[i] !== pcm[i]) { sameValues = false; break; } }
+    return segs.length > 1 && total === pcm.length && sameValues;
+  })());
+  check("splitAudioForAsr: no segment much exceeds the requested max length", (() => {
+    const pcm = new Float32Array(sr * 20);
+    const segs = splitAudio(pcm, sr, 8);
+    return segs.every((s) => s.length <= sr * 8 + sr * 2); // cut search radius is +/-2s
+  })());
+
+  check("findQuietCutIndex: picks the quiet stretch over the loud one", (() => {
+    const pcm = new Float32Array(sr * 4);
+    for (let i = 0; i < pcm.length; i++) pcm[i] = i > sr * 1.5 && i < sr * 2.5 ? 0 : 1; // loud, quiet, loud
+    const idx = findQuietCut(pcm, sr * 2, sr * 2);
+    return idx > sr * 1.5 && idx < sr * 2.5;
+  })());
+
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();
