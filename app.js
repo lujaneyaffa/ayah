@@ -141,7 +141,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v34"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v35"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -231,6 +231,7 @@ const state = {
   wordTimingCache: loadJSON(LS_WORDTIMING, {}),
   wordTiming: null, // { key, reciterId, segs, prop } — active word-highlight timing
   wordCountFor: 0, // word count of the currently rendered ayah (for fallback timing)
+  checkRefWords: [], // display-form words of the verse shown on the Check tab
   autoPlay: loadJSON(LS_AUTO, false),
   repeat: Number(loadJSON(LS_REPEAT, 1)),
   loop: normalizeLoop(loadJSON(LS_LOOP, null)),
@@ -303,7 +304,13 @@ const dom = {
   syncTest: $("#syncTest"),
   syncStatus: $("#syncStatus"),
   appVersion: $("#appVersion"),
-  diagLog: $("#diagLog")
+  diagLog: $("#diagLog"),
+  checkSurah: $("#checkSurah"),
+  checkKey: $("#checkKey"),
+  checkArabic: $("#checkArabic"),
+  checkRecordBtn: $("#checkRecordBtn"),
+  checkStatus: $("#checkStatus"),
+  checkResult: $("#checkResult")
 };
 
 /* ---------- Toast helper ---------- */
@@ -593,6 +600,7 @@ async function renderRead() {
   try {
     const data = await loadVerse(key);
     if (token !== readToken) return; // stale response
+    renderCheckVerse(key, data);
     if (data.ar) {
       const words = Array.isArray(data.words) ? data.words : null;
       state.wordCountFor = words ? words.length : 0;
@@ -1081,6 +1089,7 @@ function wireEvents() {
   dom.btnQuranCom.addEventListener("click", () => {
     window.open(`https://quran.com/${state.currentKey}`, "_blank", "noopener");
   });
+  if (dom.checkRecordBtn) dom.checkRecordBtn.addEventListener("click", toggleCheckRecording);
 
   // Keyboard arrows for quick reading
   document.addEventListener("keydown", (e) => {
@@ -1871,6 +1880,253 @@ function syncCycle() {
   pullSync(true).then((remote) => {
     if (remote && remote.savedAt && remote.savedAt > prevSaved) queuePush();
   }).catch(() => {});
+}
+
+/* ================================================================
+   Memorization check — recite out loud, compare against the verse.
+   Runs a Quran-tuned Whisper model (tarteel-ai/whisper-base-ar-quran,
+   quantized to ONNX) entirely in the browser via transformers.js — no
+   audio ever leaves the device. ~130MB total (model + WASM runtime),
+   fetched once and then
+   cached by the service worker like everything else offline.
+   ================================================================ */
+const ASR_MODEL_ID = "tarteel-whisper-quran";
+// jsdelivr's "+esm" endpoint (not the plain dist file) — the raw browser
+// bundle leaves onnxruntime-web's own sub-imports (webgpu backend, common)
+// as unresolved bare specifiers, which only "+esm" resolves without a
+// bundler or an import map.
+const ASR_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/+esm";
+
+// Pure: strip tashkeel/diacritics, tatweel, and fold letter variants that
+// Whisper's output and Quran.com's script don't always agree on (hamza
+// seats, alef maksura, teh marbuta) so a transcription and the reference
+// verse compare on the letters that actually matter for "did you say the
+// right word", not on marks.
+function normalizeArabicWord(w) {
+  return String(w || "")
+    .replace(/[ً-ْٖ-ٰٟۖ-ࣰۭ-ࣿ]/g, "") // tashkeel/marks
+    .replace(/ـ/g, "") // tatweel
+    .replace(/[آأإٱ]/g, "ا") // alef variants -> bare alef
+    .replace(/ة/g, "ه") // teh marbuta -> heh
+    .replace(/ى/g, "ي") // alef maksura -> yeh
+    .replace(/ؤ/g, "و") // waw with hamza -> waw
+    .replace(/ئ/g, "ي") // yeh with hamza -> yeh
+    .replace(/[^ؠ-ي٠-٩]/g, "") // drop punctuation/other
+    .trim();
+}
+function tokenizeArabic(text) {
+  return String(text || "").split(/\s+/).map(normalizeArabicWord).filter(Boolean);
+}
+
+// Pure: word-level LCS alignment between the reference verse and what the
+// mic heard. Returns "said"/"missed" per reference word (index-aligned with
+// refWords, so callers can zip it against the original diacritic-ed words
+// for display) plus a count of words said that aren't in the verse at all.
+function alignRecitation(refWords, saidWords) {
+  const n = refWords.length, m = saidWords.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = refWords[i - 1] === saidWords[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const perWord = refWords.map(() => "missed");
+  let i = n, j = m, extraWords = 0;
+  while (i > 0 && j > 0) {
+    if (refWords[i - 1] === saidWords[j - 1]) {
+      perWord[i - 1] = "said";
+      i--; j--;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      i--;
+    } else {
+      j--; extraWords++;
+    }
+  }
+  extraWords += j;
+  const correct = perWord.filter((s) => s === "said").length;
+  return {
+    perWord,
+    correct,
+    total: refWords.length,
+    accuracy: refWords.length ? correct / refWords.length : 0,
+    extraWords
+  };
+}
+// Pure: turn an accuracy score into the short verdict shown under the result.
+function recitationVerdict(accuracy) {
+  if (accuracy >= 0.9) return "Great job! ✅";
+  if (accuracy >= 0.6) return "Almost there — check the highlighted words.";
+  return "Let's practice this one more time.";
+}
+
+let asrPipelinePromise = null;
+async function getAsrPipeline(onProgress) {
+  if (!asrPipelinePromise) {
+    asrPipelinePromise = (async () => {
+      const { pipeline, env } = await import(ASR_CDN);
+      env.allowRemoteModels = false; // only ever fetch our own hosted model — never HF Hub
+      env.allowLocalModels = true; // browser default is false; "local" here just means "our own URL"
+      env.localModelPath = "./models/";
+      env.useBrowserCache = false; // the SW's own ASR_CACHE already persists these — skip transformers.js's separate cache so a ~130MB download isn't stored twice
+      return pipeline("automatic-speech-recognition", ASR_MODEL_ID, {
+        dtype: "q8",
+        progress_callback: onProgress
+      });
+    })().catch((err) => { asrPipelinePromise = null; throw err; });
+  }
+  return asrPipelinePromise;
+}
+
+// Resample a captured Float32 PCM buffer to the 16kHz mono Whisper expects.
+async function resampleTo16k(float32, fromRate) {
+  if (fromRate === 16000) return float32;
+  const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const targetLen = Math.ceil((float32.length * 16000) / fromRate);
+  const offline = new OfflineCtx(1, targetLen, 16000);
+  const buf = offline.createBuffer(1, float32.length, fromRate);
+  buf.copyToChannel(float32, 0);
+  const src = offline.createBufferSource();
+  src.buffer = buf;
+  src.connect(offline.destination);
+  src.start();
+  const rendered = await offline.startRendering();
+  return rendered.getChannelData(0);
+}
+
+const checkRec = { ctx: null, stream: null, node: null, chunks: [], sampleRate: 16000, active: false };
+const CHECK_MAX_SECONDS = 40; // safety cap so a forgotten recording can't grow forever
+
+async function startCheckRecording() {
+  if (checkRec.active) return;
+  try {
+    checkRec.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    toast("Microphone permission denied");
+    return;
+  }
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  checkRec.ctx = new Ctx();
+  checkRec.sampleRate = checkRec.ctx.sampleRate;
+  checkRec.chunks = [];
+  const source = checkRec.ctx.createMediaStreamSource(checkRec.stream);
+  // ScriptProcessorNode is deprecated but is the one capture path that works
+  // reliably on older iOS Safari without shipping a separate AudioWorklet
+  // module file. It only fires while connected through to a destination, so
+  // route through a silent gain to avoid mic feedback through the speakers.
+  checkRec.node = checkRec.ctx.createScriptProcessor(4096, 1, 1);
+  checkRec.node.onaudioprocess = (e) => {
+    checkRec.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  };
+  const silence = checkRec.ctx.createGain();
+  silence.gain.value = 0;
+  source.connect(checkRec.node);
+  checkRec.node.connect(silence);
+  silence.connect(checkRec.ctx.destination);
+  checkRec.active = true;
+  checkRec.autoStopTimer = setTimeout(() => {
+    if (checkRec.active) runMemorizationCheck();
+  }, CHECK_MAX_SECONDS * 1000);
+}
+
+function stopCheckRecordingRaw() {
+  clearTimeout(checkRec.autoStopTimer);
+  if (!checkRec.active) return null;
+  checkRec.active = false;
+  checkRec.node.disconnect();
+  checkRec.ctx.close().catch(() => {});
+  checkRec.stream.getTracks().forEach((t) => t.stop());
+  const total = checkRec.chunks.reduce((a, c) => a + c.length, 0);
+  const merged = new Float32Array(total);
+  let off = 0;
+  for (const c of checkRec.chunks) { merged.set(c, off); off += c.length; }
+  checkRec.chunks = [];
+  return { pcm: merged, sampleRate: checkRec.sampleRate };
+}
+
+function renderCheckVerse(key, data) {
+  if (!dom.checkArabic) return;
+  dom.checkSurah.textContent = surahNameFor(key);
+  dom.checkKey.textContent = key;
+  const words = Array.isArray(data && data.words) ? data.words : null;
+  dom.checkArabic.textContent = "";
+  state.checkRefWords = words ? words.map((w) => w.text) : tokenizeArabic(data && data.ar).map((t) => t);
+  if (words && words.length) {
+    words.forEach((w, i) => {
+      const span = document.createElement("span");
+      span.className = "qword";
+      span.dataset.i = String(i);
+      span.textContent = w.text;
+      dom.checkArabic.appendChild(span);
+      dom.checkArabic.appendChild(document.createTextNode(" "));
+    });
+  } else {
+    dom.checkArabic.textContent = (data && data.ar) || "—";
+  }
+  dom.checkResult.hidden = true;
+  dom.checkStatus.textContent = "";
+}
+
+function renderCheckResultWords(alignment) {
+  const spans = dom.checkArabic.querySelectorAll(".qword");
+  spans.forEach((span, i) => {
+    span.classList.remove("qword-correct", "qword-missed");
+    span.classList.add(alignment.perWord[i] === "said" ? "qword-correct" : "qword-missed");
+  });
+}
+
+async function runMemorizationCheck() {
+  const rec = stopCheckRecordingRaw();
+  dom.checkRecordBtn.textContent = "🎙 Start Reciting";
+  dom.checkRecordBtn.classList.remove("is-recording");
+  if (!rec || rec.pcm.length < 1600) { // less than 0.1s — nothing was captured
+    dom.checkStatus.textContent = "Didn't catch anything — try again.";
+    return;
+  }
+  dom.checkRecordBtn.disabled = true;
+  dom.checkStatus.textContent = "Loading recitation checker…";
+  try {
+    const asr = await getAsrPipeline((p) => {
+      if (p.status === "progress" && p.file) {
+        dom.checkStatus.textContent = `Downloading checker (one-time, ~130MB): ${p.file} ${Math.round(p.progress || 0)}%`;
+      } else if (p.status === "ready" || p.status === "done") {
+        dom.checkStatus.textContent = "Listening…";
+      }
+    });
+    dom.checkStatus.textContent = "Checking your recitation…";
+    const audio16k = await resampleTo16k(rec.pcm, rec.sampleRate);
+    const output = await asr(audio16k);
+    const saidWords = tokenizeArabic(output.text);
+    const refWords = (state.checkRefWords || []).map(normalizeArabicWord);
+    const alignment = alignRecitation(refWords, saidWords);
+    renderCheckResultWords(alignment);
+    dom.checkResult.hidden = false;
+    const pct = Math.round(alignment.accuracy * 100);
+    dom.checkResult.textContent = `${alignment.correct}/${alignment.total} words (${pct}%) — ${recitationVerdict(alignment.accuracy)}`;
+    dom.checkStatus.textContent = "";
+  } catch (err) {
+    dom.checkStatus.textContent = "Couldn't run the checker (offline and not yet downloaded?).";
+  } finally {
+    dom.checkRecordBtn.disabled = false;
+  }
+}
+
+function toggleCheckRecording() {
+  if (checkRec.active) {
+    dom.checkRecordBtn.disabled = true;
+    dom.checkStatus.textContent = "Checking your recitation…";
+    runMemorizationCheck();
+  } else {
+    startCheckRecording().then(() => {
+      if (checkRec.active) {
+        dom.checkRecordBtn.textContent = "⏹ Stop & Check";
+        dom.checkRecordBtn.classList.add("is-recording");
+        dom.checkStatus.textContent = "Listening…";
+        dom.checkResult.hidden = true;
+      }
+    });
+  }
 }
 
 /* ================================================================

@@ -263,5 +263,53 @@ console.log("\n--- Integration: verse loading pipeline ---");
   check("reconnect: missing current version stays safe",
     upd("v33", null) === "none");
 
+  // --- Memorization check (v35) ---
+  const normWord = vm.runInContext("normalizeArabicWord", sandbox);
+  const tokenize = vm.runInContext("tokenizeArabic", sandbox);
+  const align = vm.runInContext("alignRecitation", sandbox);
+  const verdict = vm.runInContext("recitationVerdict", sandbox);
+
+  check("normalizeArabicWord strips diacritics",
+    normWord("الْحَمْدُ") === normWord("الحمد"));
+  check("normalizeArabicWord folds alef variants to bare alef",
+    normWord("أحمد") === normWord("احمد") && normWord("إحمد") === normWord("احمد"));
+  check("normalizeArabicWord folds teh marbuta to heh",
+    normWord("رحمة") === normWord("رحمه"));
+  check("normalizeArabicWord folds alef maksura to yeh",
+    normWord("موسى") === normWord("موسي"));
+  check("normalizeArabicWord drops punctuation, keeps letters",
+    normWord("الكتاب،") === normWord("الكتاب"));
+
+  check("tokenizeArabic splits on whitespace and normalizes each word",
+    JSON.stringify(tokenize("الْحَمْدُ لِلَّهِ")) === JSON.stringify([normWord("الحمد"), normWord("لله")]));
+  check("tokenizeArabic tolerates empty/garbage input",
+    tokenize("").length === 0 && tokenize(null).length === 0);
+
+  check("alignRecitation: exact match scores 100%", (() => {
+    const r = align(["ا", "ب", "ج"], ["ا", "ب", "ج"]);
+    return r.correct === 3 && r.total === 3 && r.accuracy === 1 && r.extraWords === 0;
+  })());
+  check("alignRecitation: a dropped trailing word is marked missed", (() => {
+    const r = align(["ا", "ب", "ج"], ["ا", "ب"]);
+    return JSON.stringify(r.perWord) === JSON.stringify(["said", "said", "missed"]) && r.correct === 2;
+  })());
+  check("alignRecitation: an inserted word doesn't hurt reference words and counts as extra", (() => {
+    const r = align(["ا", "ب"], ["ا", "x", "ب"]);
+    return r.correct === 2 && r.accuracy === 1 && r.extraWords === 1;
+  })());
+  check("alignRecitation: a substituted middle word is marked missed there only", (() => {
+    const r = align(["ا", "ب", "ج"], ["ا", "x", "ج"]);
+    return JSON.stringify(r.perWord) === JSON.stringify(["said", "missed", "said"]) && r.correct === 2;
+  })());
+  check("alignRecitation: empty reference never divides by zero",
+    align([], []).accuracy === 0 && align([], []).total === 0);
+
+  check("recitationVerdict: high accuracy reads as success",
+    /Great/.test(verdict(1)) && /Great/.test(verdict(0.95)));
+  check("recitationVerdict: mid accuracy asks to check highlights",
+    /Almost/.test(verdict(0.7)));
+  check("recitationVerdict: low accuracy asks to practice again",
+    /practice/.test(verdict(0.2)));
+
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();

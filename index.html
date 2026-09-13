@@ -55,6 +55,7 @@
       <button class="tab" data-view="memorized" role="tab" aria-selected="false">
         Memorized <span class="tab-count" id="memCount">0</span>
       </button>
+      <button class="tab" data-view="check" role="tab" aria-selected="false">Check</button>
     </nav>
 
     <main>
@@ -155,6 +156,26 @@
             <p class="mem-sub" id="memSub">Mark verses to build your list.</p>
           </div>
           <ul class="mem-list" id="memList"></ul>
+        </div>
+      </section>
+
+      <!-- MEMORIZATION CHECK -->
+      <section class="view" id="view-check" data-view="check">
+        <div class="widget-card">
+          <div class="mem-head">
+            <h2>Memorization check</h2>
+            <p class="mem-sub">Recite this ayah out loud — it's checked against the text, fully on your device. First check downloads an offline recitation checker (~130MB, once).</p>
+          </div>
+          <div class="read-head">
+            <span class="surah-name" id="checkSurah"></span>
+            <span class="verse-key" id="checkKey"></span>
+          </div>
+          <div class="verse-arabic" id="checkArabic" lang="ar" dir="rtl">…</div>
+          <div class="check-controls">
+            <button class="btn btn-toggle" id="checkRecordBtn">🎙 Start Reciting</button>
+            <span class="check-status" id="checkStatus"></span>
+          </div>
+          <p class="check-result" id="checkResult" hidden></p>
         </div>
       </section>
     </main>

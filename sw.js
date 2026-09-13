@@ -1,10 +1,18 @@
 /* Ayah service worker — network-first for the shell (so updates flow),
    network-first for Quran.com data + word timings, cache-first for recitation
    audio (offline playback of ayahs you've played), cache fallback everywhere */
-const VERSION = "v34";
+const VERSION = "v35";
 const SHELL_CACHE = `ayah-shell-${VERSION}`;
 const API_CACHE = `ayah-api-${VERSION}`;
 const AUDIO_CACHE = `ayah-audio-${VERSION}`;
+// Memorization-check model + inference library: a ~100MB one-time download.
+// Deliberately NOT versioned with the app — it doesn't change on every
+// deploy, and re-downloading 100MB on every unrelated app update would be
+// awful. Served cache-first since jsdelivr URLs are pinned to exact versions
+// (immutable) and the model files under /models/ only change if we ship a
+// different model, in which case the path itself would change.
+const ASR_CACHE = "ayah-asr-v1";
+const ASR_HOSTS = new Set(["cdn.jsdelivr.net"]);
 /* Recitation audio CDNs used by the app. Played ayahs are stored so playback
    keeps working with no connection. */
 const AUDIO_HOSTS = new Set([
@@ -39,7 +47,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  const keep = new Set([SHELL_CACHE, API_CACHE, AUDIO_CACHE]);
+  const keep = new Set([SHELL_CACHE, API_CACHE, AUDIO_CACHE, ASR_CACHE]);
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => !keep.has(k)).map((k) => caches.delete(k)))
@@ -131,8 +139,39 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // ASR inference library (jsdelivr, exact version pinned in the URL — safe
+  // to cache forever, never needs revalidation).
+  if (req.method === "GET" && ASR_HOSTS.has(url.hostname)) {
+    event.respondWith(
+      caches.open(ASR_CACHE).then(async (cache) => {
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        const res = await fetch(req);
+        if (res && res.ok) cache.put(req, res.clone()).catch(() => {});
+        return res;
+      })
+    );
+    return;
+  }
+
   // Same-origin requests
   if (url.origin === self.location.origin) {
+    // Memorization-check model files: cache-first, once and done — see the
+    // ASR_CACHE comment above for why these skip the network-first path
+    // every other same-origin asset gets below.
+    if (url.pathname.includes("/models/")) {
+      event.respondWith(
+        caches.open(ASR_CACHE).then(async (cache) => {
+          const hit = await cache.match(req);
+          if (hit) return hit;
+          const res = await fetch(req);
+          if (res && res.ok) cache.put(req, res.clone()).catch(() => {});
+          return res;
+        })
+      );
+      return;
+    }
+
     // Page navigations: network-first (always get the latest HTML when online;
     // fall back to cache when offline)
     if (req.mode === "navigate") {

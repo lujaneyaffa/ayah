@@ -33,6 +33,11 @@ no subscriptions, no v0 credits.
   and **playback speed** (0.5×–2×); your choices are remembered
 - **Browse** — all 114 surahs, expandable to per-ayah chips
 - **Memorized** — mark verses (saved on-device), live count
+- **Memorization check** — recite an ayah out loud and see which words you
+  got right, powered by Tarteel's own Quran-tuned Whisper model running
+  **entirely on your device** (no audio ever leaves it). First check
+  downloads the checker (~130MB, once); after that it works offline like
+  everything else.
 - **Offline** — service worker caches the shell + viewed verses and audio links;
   curated verses work with no internet; tafsir caches recently viewed verses
 - **Installable PWA** + light/dark themes
@@ -89,7 +94,8 @@ macOS 15.6 supports Safari web widgets:
 | `manifest.webmanifest` | PWA manifest |
 | `sw.js` | Service worker (offline) |
 | `icons/` | App icons (SVG sources + PNGs) |
-| `test.js` | Node tests (14 checks) |
+| `models/tarteel-whisper-quran/` | Quantized ONNX Quran-recitation model for the memorization checker |
+| `test.js` | Node tests |
 
 ## Data & privacy
 Quran text from the public Quran.com API. Memorized list + last verse live

@@ -195,6 +195,23 @@ main { display: block; }
   transition: background-color 0.12s ease;
 }
 .qword-active { background-color: var(--word-hl); }
+/* Memorization check: per-word verdict after comparing a recitation */
+.qword-correct { color: var(--accent); }
+.qword-missed { color: var(--danger); text-decoration: underline wavy; text-underline-offset: 0.15em; }
+.check-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 10px;
+}
+.check-status { color: var(--muted); font-size: 0.9em; }
+#checkRecordBtn.is-recording { background-color: var(--danger); color: #fff; border-color: var(--danger); }
+.check-result {
+  margin: 14px 0 0;
+  text-align: center;
+  font-weight: 600;
+}
 /* Big Western-numeral ayah marker at the end of the verse (Quran.com style) */
 .ayah-badge {
   display: inline-flex;
