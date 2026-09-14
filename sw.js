@@ -1,7 +1,7 @@
 /* Ayah service worker — network-first for the shell (so updates flow),
    network-first for Quran.com data + word timings, cache-first for recitation
    audio (offline playback of ayahs you've played), cache fallback everywhere */
-const VERSION = "v36";
+const VERSION = "v37";
 const SHELL_CACHE = `ayah-shell-${VERSION}`;
 const API_CACHE = `ayah-api-${VERSION}`;
 const AUDIO_CACHE = `ayah-audio-${VERSION}`;

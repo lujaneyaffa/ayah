@@ -144,7 +144,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v36"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v37"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -749,11 +749,12 @@ async function refreshAudio(key) {
     btn.dataset.url = url;
     btn.disabled = false;
     btn.title = "Play verse recitation";
-    // Settings-driven autoplay counts as intent too, unless the user already
-    // paused (state.wantPlaying may have gone false while this was loading).
-    if (state.autoPlay || loopActive()) state.wantPlaying = true;
-    // Re-check LIVE intent (not a snapshot from before this await) so a Pause
-    // click during the fetch always wins over a stale "keep playing" decision.
+    // Only CONTINUE an already-playing session (state.wantPlaying already
+    // true from an actual Play tap) — Auto-play/Loop must never spontaneously
+    // start audio on their own, or opening/reconnecting to the app with
+    // either toggle left on from a previous session would blast audio with
+    // no user action at all. Re-checked live (not a snapshot from before
+    // this await) so a Pause click during the fetch always wins too.
     if (state.wantPlaying) {
       dom.audioEl.src = url;
       dom.audioEl.playbackRate = state.speed;
@@ -1071,6 +1072,14 @@ function escaped(str) {
    View switching + events
    ================================================================ */
 function setView(name) {
+  // Leaving the Check tab must never leave the mic listening in the
+  // background with no visible recording UI — stop and discard silently.
+  if (state.view === "check" && name !== "check" && checkRec.active) {
+    stopCheckRecordingRaw();
+    dom.checkRecordBtn.textContent = "🎙 Start Reciting";
+    dom.checkRecordBtn.classList.remove("is-recording");
+    dom.checkStatus.textContent = "";
+  }
   state.view = name;
   dom.tabs.forEach((t) => {
     const on = t.dataset.view === name;
@@ -2017,7 +2026,7 @@ async function resampleTo16k(float32, fromRate) {
   return rendered.getChannelData(0);
 }
 
-const checkRec = { ctx: null, stream: null, node: null, chunks: [], sampleRate: 16000, active: false };
+const checkRec = { ctx: null, stream: null, node: null, chunks: [], sampleRate: 16000, active: false, starting: false };
 const CHECK_MAX_SECONDS = 1200; // 20 min safety cap — a full page can take a few minutes to recite
 const CHECK_PERIODIC_MS = 8000; // how often the in-progress check re-transcribes while reciting
 let checkPeriodicTimer = null;
@@ -2034,16 +2043,36 @@ function mergeAudioChunks(chunks) {
   return merged;
 }
 
+function setCheckPageNavDisabled(disabled) {
+  if (dom.checkPagePrev) dom.checkPagePrev.disabled = disabled;
+  if (dom.checkPageNext) dom.checkPageNext.disabled = disabled;
+  if (dom.checkPageInput) dom.checkPageInput.disabled = disabled;
+}
+
 async function startCheckRecording() {
-  if (checkRec.active) return;
+  // Guards against a double-tap/double-click starting two overlapping
+  // recordings (two live mic streams, two AudioContexts) before the first
+  // getUserMedia await even resolves.
+  if (checkRec.active || checkRec.starting) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast("Microphone not available in this browser");
+    return;
+  }
+  checkRec.starting = true;
   try {
     checkRec.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch {
     toast("Microphone permission denied");
+    checkRec.starting = false;
     return;
   }
   const Ctx = window.AudioContext || window.webkitAudioContext;
   checkRec.ctx = new Ctx();
+  // iOS/strict browsers can create a context in "suspended" state, especially
+  // after the getUserMedia permission prompt's delay eats the user-gesture
+  // window — left suspended, onaudioprocess never fires and nothing gets
+  // captured at all, silently. Explicitly resuming is safe to call regardless.
+  await checkRec.ctx.resume().catch(() => {});
   checkRec.sampleRate = checkRec.ctx.sampleRate;
   checkRec.chunks = [];
   const source = checkRec.ctx.createMediaStreamSource(checkRec.stream);
@@ -2061,6 +2090,8 @@ async function startCheckRecording() {
   checkRec.node.connect(silence);
   silence.connect(checkRec.ctx.destination);
   checkRec.active = true;
+  checkRec.starting = false;
+  setCheckPageNavDisabled(true); // the page being checked can't change mid-recording
   checkRec.autoStopTimer = setTimeout(() => {
     if (checkRec.active) runMemorizationCheck();
   }, CHECK_MAX_SECONDS * 1000);
@@ -2077,6 +2108,7 @@ async function startCheckRecording() {
 function stopCheckRecordingRaw() {
   clearTimeout(checkRec.autoStopTimer);
   clearInterval(checkPeriodicTimer);
+  setCheckPageNavDisabled(false);
   if (!checkRec.active) return null;
   checkRec.active = false;
   checkRec.node.disconnect();
@@ -2282,7 +2314,9 @@ function toggleCheckRecording() {
     dom.checkStatus.textContent = "Checking your recitation…";
     runMemorizationCheck();
   } else {
+    dom.checkRecordBtn.disabled = true;
     startCheckRecording().then(() => {
+      dom.checkRecordBtn.disabled = false;
       if (checkRec.active) {
         dom.checkRecordBtn.textContent = "⏹ Stop & Check";
         dom.checkRecordBtn.classList.add("is-recording");
