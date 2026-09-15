@@ -161,7 +161,7 @@
 
       <!-- MEMORIZATION CHECK -->
       <section class="view" id="view-check" data-view="check">
-        <div class="widget-card">
+        <div class="widget-card" id="checkCard">
           <div class="mem-head">
             <h2>Memorization check</h2>
             <p class="mem-sub">Recite a whole page out loud — it's checked live against the text as you go, fully on your device. First check downloads an offline recitation checker (~130MB, once).</p>
@@ -184,6 +184,7 @@
           <div class="verse-arabic" id="checkArabic" lang="ar" dir="rtl">…</div>
           <div class="check-controls">
             <button class="btn btn-toggle" id="checkRecordBtn">🎙 Start Reciting</button>
+            <button class="btn" id="checkRestartBtn" title="Clear this attempt and start over">🔄 Restart</button>
             <span class="check-status" id="checkStatus"></span>
           </div>
           <p class="check-result" id="checkResult" hidden></p>

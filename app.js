@@ -144,7 +144,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v37"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v38"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -313,11 +313,13 @@ const dom = {
   checkKey: $("#checkKey"),
   checkArabic: $("#checkArabic"),
   checkRecordBtn: $("#checkRecordBtn"),
+  checkRestartBtn: $("#checkRestartBtn"),
   checkStatus: $("#checkStatus"),
   checkResult: $("#checkResult"),
   checkPageInput: $("#checkPageInput"),
   checkPagePrev: $("#checkPagePrev"),
-  checkPageNext: $("#checkPageNext")
+  checkPageNext: $("#checkPageNext"),
+  checkCard: $("#checkCard")
 };
 
 /* ---------- Toast helper ---------- */
@@ -821,6 +823,31 @@ function goShuffle() {
   state.currentKey = keyFromIndex(Math.floor(Math.random() * TOTAL_VERSES)).key;
   renderRead();
 }
+
+// Swipe left/right on a card to navigate without reaching for the buttons —
+// mainly for one-handed phone use. A horizontal-enough, far-enough drag
+// counts as a swipe; anything more vertical (scrolling) or short (a tap on
+// a button/dropdown inside the card) is ignored.
+function addSwipeNav(el, onSwipeLeft, onSwipeRight) {
+  if (!el) return;
+  let startX = 0, startY = 0, tracking = false;
+  el.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    tracking = true;
+  }, { passive: true });
+  el.addEventListener("touchend", (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0) onSwipeLeft(); else onSwipeRight();
+  }, { passive: true });
+}
+
 /* ---------- Loop a range of ayahs (multi-ayah repeat) ---------- */
 function normalizeLoop(raw) {
   // Always returns a safe { on, from, to } — invalid/unknown endpoints are
@@ -1075,10 +1102,7 @@ function setView(name) {
   // Leaving the Check tab must never leave the mic listening in the
   // background with no visible recording UI — stop and discard silently.
   if (state.view === "check" && name !== "check" && checkRec.active) {
-    stopCheckRecordingRaw();
-    dom.checkRecordBtn.textContent = "🎙 Start Reciting";
-    dom.checkRecordBtn.classList.remove("is-recording");
-    dom.checkStatus.textContent = "";
+    resetCheckState();
   }
   state.view = name;
   dom.tabs.forEach((t) => {
@@ -1106,6 +1130,7 @@ function wireEvents() {
     window.open(`https://quran.com/${state.currentKey}`, "_blank", "noopener");
   });
   if (dom.checkRecordBtn) dom.checkRecordBtn.addEventListener("click", toggleCheckRecording);
+  if (dom.checkRestartBtn) dom.checkRestartBtn.addEventListener("click", resetCheckState);
   if (dom.checkPagePrev) dom.checkPagePrev.addEventListener("click", () => goCheckPage(-1));
   if (dom.checkPageNext) dom.checkPageNext.addEventListener("click", () => goCheckPage(1));
   if (dom.checkPageInput) {
@@ -1121,6 +1146,8 @@ function wireEvents() {
     });
     renderCheckPage(state.checkPage);
   }
+  addSwipeNav(dom.readCard, goNext, goPrev);
+  addSwipeNav(dom.checkCard, () => { if (!checkRec.active) goCheckPage(1); }, () => { if (!checkRec.active) goCheckPage(-1); });
 
   // Keyboard arrows for quick reading
   document.addEventListener("keydown", (e) => {
@@ -2026,6 +2053,25 @@ async function resampleTo16k(float32, fromRate) {
   return rendered.getChannelData(0);
 }
 
+// Pure: boost a quiet recording up to a healthy peak level before it goes
+// to the model. A phone mic (especially held at a distance, e.g. propped up
+// in a car) often captures noticeably quieter audio than the studio
+// recitations everything else in the app plays back — a small model reading
+// that quiet signal makes more mistakes than it needs to. Leaves
+// already-loud audio and silence alone.
+function normalizeGain(pcm) {
+  let peak = 0;
+  for (let i = 0; i < pcm.length; i++) {
+    const abs = Math.abs(pcm[i]);
+    if (abs > peak) peak = abs;
+  }
+  if (peak < 1e-4 || peak >= 0.85) return pcm;
+  const gain = 0.85 / peak;
+  const out = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] * gain;
+  return out;
+}
+
 const checkRec = { ctx: null, stream: null, node: null, chunks: [], sampleRate: 16000, active: false, starting: false };
 const CHECK_MAX_SECONDS = 1200; // 20 min safety cap — a full page can take a few minutes to recite
 const CHECK_PERIODIC_MS = 8000; // how often the in-progress check re-transcribes while reciting
@@ -2155,19 +2201,23 @@ async function renderCheckPage(pageNumber) {
     const lastSurah = data.verses.length ? surahNameFor(data.verses[data.verses.length - 1].key) : "";
     dom.checkSurah.textContent = firstSurah === lastSurah ? firstSurah : `${firstSurah} – ${lastSurah}`;
     const allWords = [];
-    data.verses.forEach((v) => {
+    const TINT_COUNT = 6;
+    data.verses.forEach((v, ayahIdx) => {
+      const group = document.createElement("span");
+      group.className = `ayah-group ayah-tint-${ayahIdx % TINT_COUNT}`;
       v.words.forEach((w) => {
         const span = document.createElement("span");
         span.className = "qword";
         span.textContent = w.text;
-        dom.checkArabic.appendChild(span);
-        dom.checkArabic.appendChild(document.createTextNode(" "));
+        group.appendChild(span);
+        group.appendChild(document.createTextNode(" "));
         allWords.push(w.text);
       });
       const badge = document.createElement("span");
       badge.className = "ayah-badge";
       badge.textContent = String(parseKey(v.key).ayah);
-      dom.checkArabic.appendChild(badge);
+      group.appendChild(badge);
+      dom.checkArabic.appendChild(group);
       dom.checkArabic.appendChild(document.createTextNode(" "));
     });
     state.checkRefWords = allWords;
@@ -2194,6 +2244,10 @@ function renderCheckResultWords(alignment) {
     span.classList.remove("qword-correct", "qword-missed");
     span.classList.add(alignment.perWord[i] === "said" ? "qword-correct" : "qword-missed");
   });
+}
+
+function clearCheckHighlighting() {
+  dom.checkArabic.querySelectorAll(".qword").forEach((s) => s.classList.remove("qword-correct", "qword-missed"));
 }
 
 // Pure: index of the quietest short window near targetIdx, within
@@ -2246,7 +2300,7 @@ const ASR_SEGMENT_SECONDS = 8; // see splitAudioForAsr for why this model needs 
 
 // Shared by the periodic in-progress peek and the final stop-and-check.
 async function checkAudioAgainstPage(pcm, sampleRate) {
-  const audio16k = await resampleTo16k(pcm, sampleRate);
+  const audio16k = normalizeGain(await resampleTo16k(pcm, sampleRate));
   const asr = await getAsrPipeline(() => {});
   const segments = splitAudioForAsr(audio16k, 16000, ASR_SEGMENT_SECONDS);
   const texts = [];
@@ -2314,6 +2368,11 @@ function toggleCheckRecording() {
     dom.checkStatus.textContent = "Checking your recitation…";
     runMemorizationCheck();
   } else {
+    // A previous attempt's green/red word marks must not linger into a new
+    // one — without this, the first several seconds of a fresh recording
+    // still show last time's result, which reads as "restart doesn't work".
+    clearCheckHighlighting();
+    dom.checkResult.hidden = true;
     dom.checkRecordBtn.disabled = true;
     startCheckRecording().then(() => {
       dom.checkRecordBtn.disabled = false;
@@ -2326,6 +2385,19 @@ function toggleCheckRecording() {
       }
     });
   }
+}
+
+// Explicit "start over" — stop/discard any recording in progress, clear
+// every trace of the last attempt, and land back on a clean page. Separate
+// from the Start/Stop toggle so it always works even if that got stuck.
+function resetCheckState() {
+  stopCheckRecordingRaw();
+  dom.checkRecordBtn.textContent = "🎙 Start Reciting";
+  dom.checkRecordBtn.classList.remove("is-recording");
+  dom.checkRecordBtn.disabled = false;
+  dom.checkResult.hidden = true;
+  dom.checkStatus.textContent = "";
+  clearCheckHighlighting();
 }
 
 /* ================================================================

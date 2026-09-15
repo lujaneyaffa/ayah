@@ -13,6 +13,15 @@
   --danger: #a33;
   --radius: 20px;
   --shadow: 0 10px 30px rgba(20, 40, 30, 0.08);
+  /* Per-ayah tint cycle (Check tab's page view) — soft enough not to fight
+     the correct/missed word colors, distinct enough to see at a glance
+     where one ayah ends and the next begins. */
+  --tint-0: #fbe9d6;
+  --tint-1: #dcecf7;
+  --tint-2: #ece2f7;
+  --tint-3: #ddf0e6;
+  --tint-4: #fbe1e6;
+  --tint-5: #f3f0d8;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,6 +35,12 @@
     --accent-soft: #1c3a2c;
     --word-hl: rgba(255, 209, 61, 0.3);
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    --tint-0: #3a2f22;
+    --tint-1: #223138;
+    --tint-2: #2e2838;
+    --tint-3: #203830;
+    --tint-4: #3a2529;
+    --tint-5: #35331f;
   }
 }
 
@@ -198,6 +213,21 @@ main { display: block; }
 /* Memorization check: per-word verdict after comparing a recitation */
 .qword-correct { color: var(--accent); }
 .qword-missed { color: var(--danger); text-decoration: underline wavy; text-underline-offset: 0.15em; }
+/* Check tab page view: each ayah gets its own tint so ayah boundaries are
+   obvious at a glance across a whole page, not just the small number badge. */
+.ayah-group {
+  display: inline;
+  padding: 0.15em 0.2em;
+  border-radius: 0.5em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.ayah-tint-0 { background: var(--tint-0); }
+.ayah-tint-1 { background: var(--tint-1); }
+.ayah-tint-2 { background: var(--tint-2); }
+.ayah-tint-3 { background: var(--tint-3); }
+.ayah-tint-4 { background: var(--tint-4); }
+.ayah-tint-5 { background: var(--tint-5); }
 .check-page-nav {
   display: flex;
   align-items: center;
@@ -209,6 +239,7 @@ main { display: block; }
 .check-page-nav input[type="number"] { text-align: center; }
 .check-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   justify-content: center;

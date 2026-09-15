@@ -346,5 +346,29 @@ console.log("\n--- Integration: verse loading pipeline ---");
     return idx > sr * 1.5 && idx < sr * 2.5;
   })());
 
+  // --- Mic gain normalization (v38) ---
+  const normGain = vm.runInContext("normalizeGain", sandbox);
+  check("normalizeGain boosts a quiet recording up near full scale", (() => {
+    const pcm = new Float32Array(1000).fill(0.05);
+    const out = normGain(pcm);
+    let peak = 0; for (const v of out) peak = Math.max(peak, Math.abs(v));
+    return peak > 0.8 && peak <= 0.86;
+  })());
+  check("normalizeGain leaves an already-loud recording alone", (() => {
+    const pcm = new Float32Array(1000).fill(0.9);
+    const out = normGain(pcm);
+    return out === pcm; // same reference — no unnecessary copy/scale
+  })());
+  check("normalizeGain leaves silence alone (no divide-by-zero blowup)", (() => {
+    const pcm = new Float32Array(1000); // all zeros
+    const out = normGain(pcm);
+    return out.every((v) => v === 0);
+  })());
+  check("normalizeGain preserves relative shape, not just peak", (() => {
+    const pcm = new Float32Array([0.02, -0.01, 0.04, -0.02]);
+    const out = normGain(pcm);
+    return Math.abs(out[0] / out[2] - pcm[0] / pcm[2]) < 1e-6;
+  })());
+
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();
