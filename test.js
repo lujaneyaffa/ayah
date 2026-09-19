@@ -311,39 +311,108 @@ console.log("\n--- Integration: verse loading pipeline ---");
   check("recitationVerdict: low accuracy asks to practice again",
     /practice/.test(verdict(0.2)));
 
-  // --- Long-recording audio segmentation (v36, page-based check) ---
+  // --- Segmenting: cut on real pauses (v43) ---
   const findQuietCut = vm.runInContext("findQuietCutIndex", sandbox);
-  const splitAudio = vm.runInContext("splitAudioForAsr", sandbox);
+  const findPausesFn = vm.runInContext("findPauses", sandbox);
   const sr = 16000;
-
-  check("splitAudioForAsr: short audio passes through as a single segment", (() => {
-    const pcm = new Float32Array(sr * 5); // 5s, under the 8s segment length
-    const segs = splitAudio(pcm, sr, 8);
-    return segs.length === 1 && segs[0].length === pcm.length;
-  })());
-  check("splitAudioForAsr: long audio is split and covers every sample exactly once", (() => {
-    const pcm = new Float32Array(sr * 20); // 20s
-    for (let i = 0; i < pcm.length; i++) pcm[i] = Math.sin(i); // non-zero so nothing gets silently dropped
-    const segs = splitAudio(pcm, sr, 8);
-    const total = segs.reduce((a, s) => a + s.length, 0);
-    const rejoined = new Float32Array(total);
-    let off = 0;
-    for (const s of segs) { rejoined.set(s, off); off += s.length; }
-    let sameValues = true;
-    for (let i = 0; i < pcm.length; i++) { if (rejoined[i] !== pcm[i]) { sameValues = false; break; } }
-    return segs.length > 1 && total === pcm.length && sameValues;
-  })());
-  check("splitAudioForAsr: no segment much exceeds the requested max length", (() => {
-    const pcm = new Float32Array(sr * 20);
-    const segs = splitAudio(pcm, sr, 8);
-    return segs.every((s) => s.length <= sr * 8 + sr * 2); // cut search radius is +/-2s
-  })());
+  let pseed = 777;
+  const prnd = () => { pseed = (pseed * 1664525 + 1013904223) >>> 0; return pseed / 4294967296 - 0.5; };
+  // synthetic recitation: voiced bursts separated by pauses of the given lengths (seconds)
+  const makeSpeech = (chunks) => {
+    const total = chunks.reduce((a, c) => a + c.sec, 0);
+    const out = new Float32Array(Math.round(total * sr)); let o = 0;
+    for (const c of chunks) {
+      const n = Math.round(c.sec * sr);
+      for (let i = 0; i < n; i++) out[o + i] = c.speech ? Math.sin(i * 0.05) * (0.25 + 0.15 * Math.sin(i / 3000)) + prnd() * 0.02 : prnd() * 0.003;
+      o += n;
+    }
+    return out;
+  };
 
   check("findQuietCutIndex: picks the quiet stretch over the loud one", (() => {
     const pcm = new Float32Array(sr * 4);
     for (let i = 0; i < pcm.length; i++) pcm[i] = i > sr * 1.5 && i < sr * 2.5 ? 0 : 1; // loud, quiet, loud
     const idx = findQuietCut(pcm, sr * 2, sr * 2);
     return idx > sr * 1.5 && idx < sr * 2.5;
+  })());
+  check("findPauses: finds a real pause and reports where it is", (() => {
+    const pcm = makeSpeech([{ sec: 3, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 3, speech: 1 }]);
+    const ps = findPausesFn(pcm, 0, pcm.length, 250);
+    return ps.length === 1 && ps[0].a / sr > 2.8 && ps[0].a / sr < 3.2 && (ps[0].b - ps[0].a) / sr > 0.6;
+  })());
+  check("findPauses: ignores a gap shorter than the minimum (a breath inside a word/phrase)", (() => {
+    const pcm = makeSpeech([{ sec: 3, speech: 1 }, { sec: 0.1, speech: 0 }, { sec: 3, speech: 1 }]);
+    return findPausesFn(pcm, 0, pcm.length, 250).length === 0;
+  })());
+  check("findPauses: judges 'quiet' relative to the recording (a very quiet mic still has pauses)", (() => {
+    const pcm = makeSpeech([{ sec: 3, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 3, speech: 1 }]);
+    for (let i = 0; i < pcm.length; i++) pcm[i] *= 0.05;
+    return findPausesFn(pcm, 0, pcm.length, 250).length === 1;
+  })());
+  check("findPauses: steady noise has no pauses", (() => {
+    const pcm = new Float32Array(sr * 6); for (let i = 0; i < pcm.length; i++) pcm[i] = prnd() * 0.3;
+    return findPausesFn(pcm, 0, pcm.length, 250).length === 0;
+  })());
+
+  const planSegs = vm.runInContext("planAsrSegments", sandbox);
+  check("planAsrSegments: short audio is a single segment", (() => {
+    const pcm = makeSpeech([{ sec: 5, speech: 1 }]);
+    const segs = planSegs(pcm, sr, null, 0, true);
+    return segs.length === 1 && segs[0].start === 0 && segs[0].end === pcm.length && segs[0].final;
+  })());
+  check("planAsrSegments: cuts on the LONGEST pause, not the first one", (() => {
+    // short 0.4s pause at ~5s, long 1.2s pause at ~11s, then more speech
+    const pcm = makeSpeech([{ sec: 5, speech: 1 }, { sec: 0.4, speech: 0 }, { sec: 5.5, speech: 1 }, { sec: 1.2, speech: 0 }, { sec: 5, speech: 1 }, { sec: 10, speech: 1 }]);
+    const segs = planSegs(pcm, sr, null, 0, true);
+    const cutAt = segs[0].end / sr;
+    return cutAt > 10.9 && cutAt < 12.3;
+  })());
+  check("planAsrSegments: a cut never lands inside speech when a pause is available", (() => {
+    const pcm = makeSpeech([{ sec: 6, speech: 1 }, { sec: 0.7, speech: 0 }, { sec: 6, speech: 1 }, { sec: 0.7, speech: 0 }, { sec: 6, speech: 1 }, { sec: 0.7, speech: 0 }, { sec: 6, speech: 1 }, { sec: 3, speech: 1 }]);
+    const segs = planSegs(pcm, sr, null, 0, true);
+    // every cut but the last segment's end must sit in a silent stretch
+    return segs.slice(0, -1).every((sg) => { let peak = 0; for (let i = sg.end - 400; i < sg.end + 400; i++) peak = Math.max(peak, Math.abs(pcm[i])); return peak < 0.05; });
+  })());
+  check("planAsrSegments: no segment is longer than the maximum", (() => {
+    const pcm = makeSpeech([{ sec: 60, speech: 1 }]); // continuous, no pauses at all -> falls back to quiet spots
+    const segs = planSegs(pcm, sr, null, 0, true);
+    return segs.length >= 3 && segs.every((sg) => (sg.end - sg.start) / sr <= 18.01);
+  })());
+  check("planAsrSegments: segments are contiguous and cover the audio exactly", (() => {
+    const pcm = makeSpeech([{ sec: 7, speech: 1 }, { sec: 0.6, speech: 0 }, { sec: 9, speech: 1 }, { sec: 0.9, speech: 0 }, { sec: 8, speech: 1 }, { sec: 0.5, speech: 0 }, { sec: 9, speech: 1 }]);
+    const segs = planSegs(pcm, sr, null, 0, true);
+    let ok = segs[0].start === 0 && segs[segs.length - 1].end === pcm.length;
+    for (let i = 1; i < segs.length; i++) if (segs[i].start !== segs[i - 1].end) ok = false;
+    return ok;
+  })());
+  check("planAsrSegments: while recording, earlier segments are final and the last is provisional", (() => {
+    const pcm = makeSpeech([{ sec: 8, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 8, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 8, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 5, speech: 1 }]);
+    const segs = planSegs(pcm, sr, null, 0, false);
+    return segs.length >= 2 && segs.slice(0, -1).every((x) => x.final) && segs[segs.length - 1].final === false;
+  })());
+  check("planAsrSegments: with less than a full window of audio nothing is decided yet", (() => {
+    const pcm = makeSpeech([{ sec: 8, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 6, speech: 1 }]);
+    const segs = planSegs(pcm, sr, null, 0, false);
+    return segs.length === 1 && segs[0].final === false && segs[0].end === pcm.length;
+  })());
+  check("planAsrSegments: once recording has ended, everything is final", (() => {
+    const pcm = makeSpeech([{ sec: 8, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 8, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 9, speech: 1 }, { sec: 5, speech: 1 }]);
+    return planSegs(pcm, sr, null, 0, true).every((x) => x.final);
+  })());
+  check("planAsrSegments: live cuts are exactly the cuts a final pass makes (cached text stays valid)", (() => {
+    const full = makeSpeech([{ sec: 8, speech: 1 }, { sec: 0.9, speech: 0 }, { sec: 9, speech: 1 }, { sec: 0.6, speech: 0 }, { sec: 8, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 9, speech: 1 }, { sec: 0.7, speech: 0 }, { sec: 8, speech: 1 }, { sec: 8, speech: 1 }]);
+    const late = planSegs(full, sr, null, 0, true);
+    // as if the recording were 30s, then 45s, then 60s long: whatever was already final must match
+    return [30, 45, 60].every((secs) => {
+      const early = planSegs(full.subarray(0, Math.min(full.length, secs * sr)), sr, null, 0, false).filter((x) => x.final);
+      return early.every((x, i) => late[i].start === x.start && late[i].end === x.end);
+    });
+  })());
+  check("planAsrSegments: resuming from a finished boundary continues with the same cuts", (() => {
+    const full = makeSpeech([{ sec: 8, speech: 1 }, { sec: 0.9, speech: 0 }, { sec: 9, speech: 1 }, { sec: 0.6, speech: 0 }, { sec: 8, speech: 1 }, { sec: 0.8, speech: 0 }, { sec: 9, speech: 1 }, { sec: 0.7, speech: 0 }, { sec: 8, speech: 1 }]);
+    const all = planSegs(full, sr, null, 0, true);
+    const rest = planSegs(full, sr, null, all[0].end, true);
+    return rest.length === all.length - 1 && rest.every((x, i) => x.start === all[i + 1].start && x.end === all[i + 1].end);
   })());
 
   // --- Mic gain normalization (v38) ---
@@ -372,7 +441,6 @@ console.log("\n--- Integration: verse loading pipeline ---");
 
   // --- Checker v39: tolerant matching, reached, incremental segments, speech gate ---
   const sim = vm.runInContext("wordSimilarity", sandbox);
-  const planSegs = vm.runInContext("planAsrSegments", sandbox);
   const looksSpeech = vm.runInContext("segmentLooksLikeSpeech", sandbox);
   const nw = normWord;
 
@@ -419,29 +487,6 @@ console.log("\n--- Integration: verse loading pipeline ---");
   })());
 
   const mkAudio = (sec) => new Float32Array(sr * sec);
-  check("planAsrSegments: while still recording, earlier segments are final and the last is provisional", (() => {
-    const segs = planSegs(mkAudio(30), sr, 7, 0, false);
-    return segs.length >= 3 && segs.slice(0, -1).every((x) => x.final) && segs[segs.length - 1].final === false;
-  })());
-  check("planAsrSegments: once recording has ended, everything is final", (() => {
-    const segs = planSegs(mkAudio(30), sr, 7, 0, true);
-    return segs.every((x) => x.final);
-  })());
-  check("planAsrSegments: segments are contiguous and cover the audio through the end when finished", (() => {
-    const segs = planSegs(mkAudio(30), sr, 7, 0, true);
-    let ok = segs[0].start === 0 && segs[segs.length - 1].end === sr * 30;
-    for (let i = 1; i < segs.length; i++) if (segs[i].start !== segs[i - 1].end) ok = false;
-    return ok;
-  })());
-  check("planAsrSegments: resuming from a finished boundary yields the same later cuts", (() => {
-    const pcm = mkAudio(40);
-    for (let i = 0; i < pcm.length; i++) pcm[i] = Math.sin(i / 7) * (i % (sr * 3) < sr ? 0.01 : 0.5);
-    const early = planSegs(pcm.subarray(0, sr * 25), sr, 7, 0, false);
-    const firstFinal = early.filter((x) => x.final);
-    const late = planSegs(pcm, sr, 7, 0, true);
-    return firstFinal.length > 0 && firstFinal.every((x, i) => late[i].start === x.start && late[i].end === x.end);
-  })());
-
   let seed = 12345;
   const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 - 0.5; };
   check("segmentLooksLikeSpeech: steady noise is not speech", (() => {
@@ -466,6 +511,100 @@ console.log("\n--- Integration: verse loading pipeline ---");
     return looksSpeech(n) === true;
   })());
   check("segmentLooksLikeSpeech: too-short scraps are skipped", looksSpeech(new Float32Array(500).fill(0.3)) === false);
+
+  // --- Mistakes report (v43) ---
+  const buildReport = vm.runInContext("buildCheckReport", sandbox);
+  check("alignRecitation: a wrong word is reported with what was heard instead", (() => {
+    const r = align(["ا", "بكر", "ج"], ["ا", "سوى", "ج"], ["ا", "سُوى", "ج"]);
+    return r.perWord[1] === "missed" && r.heard[1] === "سُوى" && r.heard[0] === "ا";
+  })());
+  check("alignRecitation: a word that was never heard has nothing heard for it", (() => {
+    const r = align(["ا", "بكر", "ج", "د"], ["ا", "ج", "د"]);
+    return r.perWord[1] === "missed" && r.heard[1] === null && r.correct === 3;
+  })());
+  check("alignRecitation: pairing a wrong word never costs a real match", (() => {
+    const r = align(["ا", "ب", "ج", "د", "ه"], ["ا", "ج", "د", "ه"]);
+    return r.correct === 4 && r.perWord[1] === "missed" && r.heard[1] === null;
+  })());
+  check("alignRecitation: a close word reports what was heard", (() => {
+    const r = align([nw("الرَّحْمَٰنِ")], [nw("الرحمان")], ["الرحمان"]);
+    return r.perWord[0] === "close" && r.heard[0] === "الرحمان";
+  })());
+
+  const aRep = align(["ا", "بكر", "جمل", "الرحمن", "ه", "و"], ["ا", "سوى", "جمل", "الرحمان", "ه"], ["ا", "سُوى", "جمل", "الرحمان", "ه"]);
+  const rep = buildReport(aRep, ["ا", "بَكْر", "جَمَل", "الرَّحْمَٰنِ", "هـ", "و"], [1, 1, 2, 2, 2, 3]);
+  check("buildCheckReport: counts mistakes and close separately", rep.mistakes === 1 && rep.close === 1);
+  check("buildCheckReport: groups by ayah in reading order", rep.groups.length === 2 && rep.groups[0].ayah === 1 && rep.groups[1].ayah === 2);
+  check("buildCheckReport: a wrong word says what was heard instead, with the expected word", (() => {
+    const it = rep.groups[0].items[0];
+    return it.kind === "wrong" && it.expected === "بَكْر" && it.heard === "سُوى" && it.idx === 1;
+  })());
+  check("buildCheckReport: a close word is listed as close", rep.groups[1].items[0].kind === "close");
+  check("buildCheckReport: words past where the reciter stopped are 'not reached', not mistakes",
+    rep.notReached && rep.notReached.words === 1 && rep.notReached.fromAyah === 3 && rep.mistakes === 1);
+  check("buildCheckReport: a perfect recitation has an empty report", (() => {
+    const r = buildReport(align(["ا", "ب"], ["ا", "ب"]), ["ا", "ب"], [1, 1]);
+    return r.mistakes === 0 && r.close === 0 && r.groups.length === 0 && r.notReached === null;
+  })());
+  check("buildCheckReport: a skipped word is 'skipped' (nothing heard for it)", (() => {
+    const r = buildReport(align(["ا", "بكر", "ج", "د"], ["ا", "ج", "د"]), ["ا", "بكر", "ج", "د"], [1, 1, 1, 1]);
+    return r.groups[0].items[0].kind === "skipped" && r.groups[0].items[0].heard === null;
+  })());
+
+  // --- Second look at dropped phrases (v43) ---
+  const suspectGaps = vm.runInContext("findSuspectGaps", sandbox);
+  const segsForGap = vm.runInContext("segmentsForGap", sandbox);
+  const refine = vm.runInContext("refineWithSecondLook", sandbox);
+
+  check("alignRecitation: reports which reference word each heard word lined up with", (() => {
+    const r = align(["ا", "ب", "ج"], ["ا", "ج", "x"]);
+    return r.saidRef[0] === 0 && r.saidRef[1] === 2 && r.saidRef[2] === -1;
+  })());
+  check("findSuspectGaps: finds a run of 3+ missed words inside what was recited", (() => {
+    const g = suspectGaps({ reached: 8, perWord: ["said", "missed", "missed", "missed", "said", "missed", "said", "said", "missed"] }, 3);
+    return g.length === 1 && g[0].from === 1 && g[0].to === 3;
+  })());
+  check("findSuspectGaps: a lone missed word is not suspicious", suspectGaps({ reached: 4, perWord: ["said", "missed", "said", "said"] }, 3).length === 0);
+  check("findSuspectGaps: words after where the reciter stopped are never suspicious", suspectGaps({ reached: 2, perWord: ["said", "said", "missed", "missed", "missed"] }, 3).length === 0);
+  check("segmentsForGap: covers the segment before through the segment after the gap",
+    JSON.stringify(segsForGap({ from: 2, to: 3 }, { saidRef: [0, 1, -1, 4, 5] }, [0, 0, 0, 1, 1])) === "[0,1]");
+  check("segmentsForGap: a gap at the very start begins at the first segment",
+    JSON.stringify(segsForGap({ from: 0, to: 2 }, { saidRef: [3, 4, 5] }, [1, 1, 2])) === "[0,1]");
+
+  const ref8 = ["بسم", "الله", "الرحمن", "الرحيم", "الحمد", "لله", "رب", "العالمين"];
+  check("refineWithSecondLook: recovers a phrase the first pass dropped", await (async () => {
+    const texts = ["", "الحمد لله رب العالمين", ""];
+    const r = await refine(texts, ref8, async (k) => (k === 1 ? "بسم الله الرحمن الرحيم الحمد لله رب العالمين" : texts[k]));
+    return r.refined === 1 && r.alignment.correct === 8;
+  })());
+  check("refineWithSecondLook: does nothing when the first pass had no suspicious gap", await (async () => {
+    let calls = 0;
+    const r = await refine(["بسم الله الرحمن الرحيم الحمد لله رب العالمين"], ref8, async () => { calls++; return "x"; });
+    return r.refined === 0 && calls === 0 && r.alignment.correct === 8;
+  })());
+  check("refineWithSecondLook: keeps the original when the retry is no better (a genuinely skipped ayah stays skipped)", await (async () => {
+    const texts = ["", "الحمد لله رب العالمين", ""];
+    const r = await refine(texts, ref8, async (k) => texts[k]);
+    return r.refined === 0 && r.alignment.correct === 4 && r.texts[1] === texts[1];
+  })());
+  check("refineWithSecondLook: rejects a retry that has more words but matches the text worse", await (async () => {
+    const texts = ["", "الحمد لله رب العالمين", ""];
+    const r = await refine(texts, ref8, async (k) => (k === 1 ? "ص ض ط ظ ع غ ف ق" : texts[k]));
+    return r.refined === 0 && r.alignment.correct === 4 && r.texts[1] === texts[1];
+  })());
+  check("refineWithSecondLook: stops at once if the attempt was cancelled", await (async () => {
+    const texts = ["", "الحمد لله رب العالمين", ""];
+    const r = await refine(texts, ref8, async () => "بسم الله الرحمن الرحيم الحمد لله رب العالمين", () => true);
+    return r.refined === 0 && r.alignment.correct === 4;
+  })());
+
+  // --- Repeat-loop guard (v43) ---
+  const collapse = vm.runInContext("collapseRepeatedPhrases", sandbox);
+  check("collapseRepeatedPhrases: a phrase stuck on repeat is kept once", collapse("س ا ب ج ا ب ج ا ب ج ا ب ج ا ب ج ص") === "س ا ب ج ص");
+  check("collapseRepeatedPhrases: a single word looping is kept once", collapse("س ا ا ا ا ا ا ص") === "س ا ص");
+  check("collapseRepeatedPhrases: ignores diacritics when deciding two words are the same", collapse("رَبِّ رَبِ ربّ رب رب") === "رَبِّ");
+  check("collapseRepeatedPhrases: normal repetition (2x or 3x) is left alone", collapse("ا ب ا ب") === "ا ب ا ب" && collapse("ا ب ا ب ا ب") === "ا ب ا ب ا ب");
+  check("collapseRepeatedPhrases: ordinary text and empty input are untouched", collapse("بسم الله الرحمن الرحيم") === "بسم الله الرحمن الرحيم" && collapse("") === "");
 
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();

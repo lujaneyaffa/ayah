@@ -35,14 +35,22 @@ no subscriptions, no v0 credits.
 - **Memorization check** — recite a whole Mushaf page out loud and watch it
   follow along: words turn green as you get them right, amber when they were
   close, red when missed, and words you haven't reached yet stay neutral. The
-  page reads as one continuous Mushaf-style block: small type, each ayah softly
-  highlighted and starting on a new line, and its number never stranded on a
-  line of its own. Start/Restart stay pinned at the top, the page updates every
-  few seconds while you recite, a level meter shows the mic is hearing you, and
-  Restart wipes the attempt (including any check still running). Powered by
-  Tarteel's own Quran-tuned Whisper model running **entirely on your device**
-  (no audio ever leaves it). First check downloads the checker (~130MB, once);
-  after that it works offline like everything else.
+  page reads as one continuous Mushaf-style block (small type, each ayah softly
+  highlighted and starting on a new line, its number never stranded on a line of
+  its own). Start/Restart stay pinned at the top and it updates every few
+  seconds while you recite. When you tap **Stop & Check** you get an exact
+  account of what went wrong, ayah by ayah — *not heard*, *said differently*
+  (with what it heard instead) or *close* — and tapping a mistake jumps to that
+  word in the page.
+  Powered by **Tarteel AI's open Quran speech model**
+  (`tarteel-ai/whisper-base-ar-quran`, the larger of the two Quran models
+  Tarteel publishes) running **entirely on your device** — no audio ever leaves
+  it. First check downloads the checker (~130MB, once); after that it works
+  offline like everything else.
+  *Accuracy:* the audio is cut on real pauses (ayahs end on the longest ones)
+  rather than at fixed intervals — measured on real recitation of real pages
+  this took correctly-recited words marked right from ~92% to ~99%, and a stretch
+  where the model drops a phrase is automatically re-checked in finer pieces.
 - **Offline** — service worker caches the shell + viewed verses and audio links;
   curated verses work with no internet; tafsir caches recently viewed verses
 - **Installable PWA** + light/dark themes

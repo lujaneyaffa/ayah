@@ -144,7 +144,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v42"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v43"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -234,6 +234,7 @@ const state = {
   wordCountFor: 0, // word count of the currently rendered ayah (for fallback timing)
   loadedAudioId: null, // "reciter:verseKey" currently loaded in the <audio> element
   checkRefWords: [], // display-form words of the page shown on the Check tab
+  checkAyahOf: [],   // the ayah number of each of those words (same indexing)
   checkPage: Math.max(1, Math.min(TOTAL_PAGES, Number(loadJSON(LS_CHECK_PAGE, 1)) || 1)),
   autoPlay: loadJSON(LS_AUTO, false),
   repeat: Number(loadJSON(LS_REPEAT, 1)),
@@ -311,6 +312,7 @@ const dom = {
   checkArabic: $("#checkArabic"),
   checkRecordBtn: $("#checkRecordBtn"),
   checkRestartBtn: $("#checkRestartBtn"),
+  checkReport: $("#checkReport"),
   checkLevel: $("#checkLevel"),
   checkLevelFill: $("#checkLevelFill"),
   checkStatus: $("#checkStatus"),
@@ -1033,6 +1035,14 @@ function wireEvents() {
   });
   if (dom.checkRecordBtn) dom.checkRecordBtn.addEventListener("click", toggleCheckRecording);
   if (dom.checkRestartBtn) dom.checkRestartBtn.addEventListener("click", resetCheckState);
+  if (dom.checkReport) dom.checkReport.addEventListener("click", (e) => {
+    const li = e.target.closest && e.target.closest(".cr-item");
+    if (!li) return;
+    const w = dom.checkArabic.querySelectorAll(".qword")[Number(li.dataset.idx)];
+    if (!w) return;
+    w.scrollIntoView({ block: "center", behavior: "smooth" });
+    w.classList.remove("qword-flash"); void w.offsetWidth; w.classList.add("qword-flash");
+  });
   if (dom.checkPagePrev) dom.checkPagePrev.addEventListener("click", () => goCheckPage(-1));
   if (dom.checkPageNext) dom.checkPageNext.addEventListener("click", () => goCheckPage(1));
   if (dom.checkPageInput) {
@@ -1871,6 +1881,15 @@ function normalizeArabicWord(w) {
     .replace(/[^ؠ-ي٠-٩]/g, "") // drop punctuation/other
     .trim();
 }
+// Like tokenizeArabic, but keeps each word's original (diacritized) form next
+// to its normalized one — the normalized form is what gets compared, the
+// original is what gets shown ("you said X").
+function tokenizeArabicWithRaw(text) {
+  return String(text || "")
+    .split(/\s+/)
+    .map((raw) => ({ norm: normalizeArabicWord(raw), raw: raw.replace(/[^\u0600-\u06FF]/g, "") }))
+    .filter((t) => t.norm);
+}
 function tokenizeArabic(text) {
   return String(text || "").split(/\s+/).map(normalizeArabicWord).filter(Boolean);
 }
@@ -1895,6 +1914,7 @@ function wordSimilarity(a, b) {
 }
 const CLOSE_MIN_SIM = 0.75; // "heard something very like it" — flagged, not counted as right
 const CLOSE_WEIGHT = 0.6;
+const SUBST_WEIGHT = 0.001;
 function matchWeight(sim) { return sim === 1 ? 1 : sim >= CLOSE_MIN_SIM ? CLOSE_WEIGHT : 0; }
 
 // Pure: word-level alignment between the reference text and what the mic
@@ -1906,7 +1926,8 @@ function matchWeight(sim) { return sim === 1 ? 1 : sim >= CLOSE_MIN_SIM ? CLOSE_
 // (index-aligned with refWords, so callers zip it against the display words),
 // how far into the text the reciter got (`reached`: words past it are simply
 // not recited yet, not mistakes) and how many heard words matched nothing.
-function alignRecitation(refWords, saidWords) {
+function alignRecitation(refWords, saidWords, saidRaw) {
+  const raw = saidRaw && saidRaw.length === saidWords.length ? saidRaw : saidWords; // what to show for a heard word
   const n = refWords.length, m = saidWords.length;
   const W = m + 2;
   // dp[i][j] = best score aligning refWords[i..] with saidWords[j..]. Solved
@@ -1916,7 +1937,7 @@ function alignRecitation(refWords, saidWords) {
   // page from the top, so a heard "الرحمن الرحيم" belongs to the Bismillah
   // they just recited, not to an ayah further down.
   const dp = new Float64Array((n + 2) * W); // 64-bit on purpose: 32-bit rounding turns equal scores into unequal ones and breaks the tie-breaking below
-  const mv = new Uint8Array((n + 2) * W); // 1 skip-ref, 2 skip-said, 3 one:one, 4 one ref:two said, 5 two ref:one said
+  const mv = new Uint8Array((n + 2) * W); // 1 skip-ref, 2 skip-said, 3 one:one, 4 one ref:two said, 5 two ref:one said, 6 substitution
   const at = (i, j) => i * W + j;
   for (let i = n; i >= 0; i--) {
     for (let j = m; j >= 0; j--) {
@@ -1935,6 +1956,11 @@ function alignRecitation(refWords, saidWords) {
         const w5 = matchWeight(wordSimilarity(refWords[i] + refWords[i + 1], saidWords[j]));
         if (w5 > 0 && dp[at(i + 2, j + 1)] + 2 * w5 > best) { best = dp[at(i + 2, j + 1)] + 2 * w5; move = 5; }
       }
+      // Substitution: pair a reference word with a heard word that doesn't match
+      // it, so a wrong word can be reported as "said X instead of Y". Worth a
+      // hair more than skipping both, and far less than any real match, so it
+      // never costs a match.
+      if (i < n && j < m && dp[at(i + 1, j + 1)] + SUBST_WEIGHT > best) { best = dp[at(i + 1, j + 1)] + SUBST_WEIGHT; move = 6; }
       if (j < m && dp[at(i, j + 1)] > best) { best = dp[at(i, j + 1)]; move = 2; }
       if (i < n && dp[at(i + 1, j)] > best) { best = dp[at(i + 1, j)]; move = 1; }
       dp[at(i, j)] = best;
@@ -1942,20 +1968,28 @@ function alignRecitation(refWords, saidWords) {
     }
   }
   const perWord = refWords.map(() => "missed");
+  const heard = refWords.map(() => null); // what was heard for this word (null = nothing lined up with it)
+  const saidRef = saidWords.map(() => -1); // for each heard word: the reference word it lined up with (-1 = none)
   const grade = (sim) => (sim === 1 ? "said" : "close");
   let i = 0, j = 0, extraWords = 0;
   while (i < n || j < m) {
     const move = mv[at(i, j)];
     if (move === 3) {
       perWord[i] = grade(wordSimilarity(refWords[i], saidWords[j]));
+      heard[i] = raw[j]; saidRef[j] = i;
       i++; j++;
     } else if (move === 4) {
       perWord[i] = grade(wordSimilarity(refWords[i], saidWords[j] + saidWords[j + 1]));
+      heard[i] = raw[j] + " " + raw[j + 1]; saidRef[j] = i; saidRef[j + 1] = i;
       i++; j += 2;
     } else if (move === 5) {
       const g = grade(wordSimilarity(refWords[i] + refWords[i + 1], saidWords[j]));
       perWord[i] = g; perWord[i + 1] = g;
+      heard[i] = raw[j]; heard[i + 1] = raw[j]; saidRef[j] = i;
       i += 2; j++;
+    } else if (move === 6) {
+      heard[i] = raw[j]; saidRef[j] = i; // stays "missed": something else was said here
+      i++; j++;
     } else if (move === 2 || i >= n) {
       extraWords++; j++;
     } else {
@@ -1968,6 +2002,8 @@ function alignRecitation(refWords, saidWords) {
   perWord.forEach((x, idx) => { if (x !== "missed") reached = idx + 1; });
   return {
     perWord,
+    heard,
+    saidRef,
     correct,
     close,
     total: n,
@@ -2041,8 +2077,10 @@ function normalizeGain(pcm) {
 
 const CHECK_MAX_SECONDS = 600; // 10 min safety cap — a full page is a few minutes; keeps a forgotten recording from growing forever
 const CHECK_PERIODIC_MS = 5000; // how often the in-progress check refreshes while reciting
-const ASR_SEGMENT_SECONDS = 7; // see splitAudioForAsr for why this model needs short segments
-const ASR_CUT_SEARCH_SECONDS = 2; // how far either side of a segment boundary to look for a pause to cut on
+// Segmenting (see planAsrSegments): cut on real pauses, at most ~18s apart.
+const ASR_MIN_SEGMENT_SECONDS = 2;
+const ASR_MAX_SEGMENT_SECONDS = 18;
+const ASR_PAUSE_MS = 250; // a quiet stretch at least this long counts as a pause
 
 // One recording attempt. Everything async that belongs to an attempt checks
 // `cancelled` after every await, so a Restart (or starting a new take, or
@@ -2067,7 +2105,10 @@ function newCheckSession(sampleRate) {
     len: 0,
     doneEnd: 0,         // audio before this is finished: its transcript is cached below
     doneTexts: [],
+    doneSegs: [],       // [start, end) of each finished segment, parallel to doneTexts
     refWords: (state.checkRefWords || []).map(normalizeArabicWord), // frozen at start
+    refDisp: (state.checkRefWords || []).slice(),
+    ayahOf: (state.checkAyahOf || []).slice(),
     page: state.checkPage,
     chain: Promise.resolve(),
     tickQueued: false
@@ -2306,6 +2347,8 @@ async function renderCheckPage(pageNumber) {
   dom.checkResult.hidden = true;
   dom.checkArabic.textContent = "";
   state.checkRefWords = [];
+  state.checkAyahOf = [];
+  clearCheckReport();
   try {
     const data = await loadPage(pageNumber);
     if (token !== checkPageToken) return; // stale response — user flipped pages again
@@ -2314,6 +2357,7 @@ async function renderCheckPage(pageNumber) {
     const lastSurah = data.verses.length ? surahNameFor(data.verses[data.verses.length - 1].key) : "";
     dom.checkSurah.textContent = firstSurah === lastSurah ? firstSurah : `${firstSurah} – ${lastSurah}`;
     const allWords = [];
+    const ayahOf = [];
     const TINT_COUNT = 6;
     // One continuous page, like a printed Mushaf: small type, no boxes or
     // gaps between ayahs, each ayah only a soft inline highlight. Every ayah
@@ -2334,6 +2378,7 @@ async function renderCheckPage(pageNumber) {
         span.className = "qword";
         span.textContent = w.text;
         allWords.push(w.text);
+        ayahOf.push(parseKey(v.key).ayah);
         if (wi < v.words.length - 1) {
           group.appendChild(span);
           group.appendChild(document.createTextNode(" "));
@@ -2350,6 +2395,7 @@ async function renderCheckPage(pageNumber) {
       dom.checkArabic.appendChild(row);
     });
     state.checkRefWords = allWords;
+    state.checkAyahOf = ayahOf;
     dom.checkStatus.textContent = "";
   } catch (err) {
     if (token !== checkPageToken) return;
@@ -2384,9 +2430,43 @@ function clearCheckHighlighting() {
   dom.checkArabic.querySelectorAll(".qword").forEach((s) => s.classList.remove("qword-correct", "qword-close", "qword-missed"));
 }
 
+// Pure: the pauses in pcm[from, to) — runs of quiet 50ms windows at least
+// minPauseMs long — as [{a, b}] sample indices. "Quiet" is relative to the
+// audio itself (a phone mic in a car and a studio recording sit at very
+// different levels): near the noise floor, and well below the loud parts.
+function findPauses(pcm, from, to, minPauseMs) {
+  const win = 800; // 50ms at 16kHz
+  const env = [];
+  for (let i = from; i + win <= to; i += win) {
+    let sum = 0;
+    for (let j = i; j < i + win; j++) sum += pcm[j] * pcm[j];
+    env.push(Math.sqrt(sum / win));
+  }
+  if (!env.length) return [];
+  const sorted = env.slice().sort((x, y) => x - y);
+  const hi = sorted[Math.floor(sorted.length * 0.9)];    // loud (speech) level
+  const floor = sorted[Math.floor(sorted.length * 0.03)]; // noise floor
+  // Quiet = near the noise floor, but never allowed above 25% of the loud
+  // level (steady noise or unbroken speech must not read as one giant pause)
+  // nor below 6% of it (digital silence still counts).
+  const thresh = Math.min(hi * 0.25, Math.max(hi * 0.06, floor * 2.5));
+  const minWins = Math.ceil(minPauseMs / 50);
+  const pauses = [];
+  let run = -1;
+  for (let k = 0; k <= env.length; k++) {
+    const quiet = k < env.length && env[k] < thresh;
+    if (quiet && run < 0) run = k;
+    if (!quiet && run >= 0) {
+      if (k - run >= minWins) pauses.push({ a: from + run * win, b: from + k * win });
+      run = -1;
+    }
+  }
+  return pauses;
+}
+
 // Pure: index of the quietest short window near targetIdx, within
-// +/-searchRadius samples. Used to cut long audio on a pause instead of
-// mid-word.
+// +/-searchRadius samples. Fallback cut when a stretch of audio has no real
+// pause in it at all.
 function findQuietCutIndex(pcm, targetIdx, searchRadius) {
   const winSize = 800; // 50ms at 16kHz
   const start = Math.max(0, targetIdx - searchRadius);
@@ -2401,42 +2481,62 @@ function findQuietCutIndex(pcm, targetIdx, searchRadius) {
   return bestIdx;
 }
 
-// Pure: plan how to cut audio (from fromIdx on) into segments no longer than
-// about maxSegmentSec, each cut on the quietest nearby point rather than an
-// arbitrary sample. A cut can only be *decided* once the audio after it is
-// available (we look searchSec ahead for a pause), so while recording is still
-// going the segments before that are `final` (safe to cache forever) and the
-// last one is provisional and gets re-done as more audio arrives. When the
-// recording has ended (isFinal), everything is final.
+// Pure: plan how to cut audio (from fromIdx on) into segments for the model.
 //
-// Why segments at all: Whisper's own long-form chunking
-// (chunk_length_s/stride_length_s) merges overlapping windows using the
-// model's timestamp tokens, which this narrow Quran-only fine-tune doesn't
-// generate reliably (return_timestamps mode produces garbage on it) — so its
-// automatic long-form path silently drops or garbles whole phrases. A
-// single-pass call is solid up to a point, but beyond roughly 10s on Quranic
-// recitation specifically (short, repetitive, formulaic phrases like
-// "الرحمن الرحيم" recurring seconds apart) the model tends to drift and skip or
-// repeat-suppress a phrase it just "heard" moments earlier — a known Whisper
-// long-form failure mode. Short segments transcribed independently avoid both.
-function planAsrSegments(pcm, sampleRate, maxSegmentSec, fromIdx, isFinal, searchSec) {
-  const maxLen = Math.round(maxSegmentSec * sampleRate);
-  const radius = Math.round((searchSec === undefined ? ASR_CUT_SEARCH_SECONDS : searchSec) * sampleRate);
+// THIS IS WHERE MOST OF THE ACCURACY IS WON OR LOST. Measured on real
+// recitation of real Mushaf pages (Tarteel's model, the deployed int8
+// build): when every segment is exactly one whole ayah the model gets 100% of
+// the words right with nothing invented; cut the same audio blindly every 7s
+// and it drops to ~92% with ~6 invented words per 100 — a word cut in half or
+// a phrase severed from its context is what the model gets wrong, not the
+// recitation. So cuts go on real pauses (ayahs end on the longest ones), not
+// at fixed times:
+//   - look at the next `maxSec` of audio; among its pauses (>= pauseMs, past
+//     `minSec`) cut on the LONGEST one; with no pause at all, cut on the
+//     quietest spot near the end of the window;
+//   - never more than ~18s per segment: a couple of ayahs at most (longer
+//     drifts on repeated phrases, e.g. "الرحمن الرحيم" or Ar-Rahman's refrain,
+//     and skips words), and each segment is one fixed-cost model call so fewer
+//     is also faster (about half the calls of the old blind 7s cutting).
+// Measured with this rule: 98.6-99.4% right across 7 reciters, 97.5% on a
+// quiet noisy phone-mic simulation (blind cutting: 87.9%).
+//
+// A cut can only be *decided* once the whole `maxSec` window after `start` is
+// available (a longer pause might still be coming), so while recording is
+// still going the segments before that are `final` (safe to cache forever,
+// and identical to what a final pass would choose) and the last one is
+// provisional and gets re-done as more audio arrives. When recording has
+// ended (isFinal), everything is final.
+//
+// (Whisper's own long-form chunking, chunk_length_s/stride_length_s, isn't an
+// option: it merges windows using timestamp tokens this Quran fine-tune
+// doesn't generate reliably — return_timestamps mode produces garbage.)
+function planAsrSegments(pcm, sampleRate, opts, fromIdx, isFinal) {
+  const o = Object.assign({ minSec: ASR_MIN_SEGMENT_SECONDS, maxSec: ASR_MAX_SEGMENT_SECONDS, pauseMs: ASR_PAUSE_MS }, opts || {});
+  const minLen = Math.round(o.minSec * sampleRate);
+  const maxLen = Math.round(o.maxSec * sampleRate);
   const out = [];
   let start = fromIdx || 0;
   while (start < pcm.length) {
-    const target = start + maxLen;
-    if (target >= pcm.length) { out.push({ start, end: pcm.length, final: !!isFinal }); break; }
-    if (!isFinal && target + radius > pcm.length) { out.push({ start, end: target, final: false }); break; }
-    let end = findQuietCutIndex(pcm, target, radius);
-    if (end <= start) end = target; // safety: never stall
+    const windowEnd = start + maxLen;
+    if (windowEnd > pcm.length) { // not enough audio yet to decide a cut (or, at the end, the last piece)
+      out.push({ start, end: pcm.length, final: !!isFinal });
+      break;
+    }
+    const pauses = findPauses(pcm, start, windowEnd, o.pauseMs).filter((p) => (p.a + p.b) / 2 > start + minLen);
+    let end;
+    if (pauses.length) {
+      let best = pauses[0];
+      for (const p of pauses) if (p.b - p.a >= best.b - best.a) best = p; // longest; on a tie, the later one
+      end = Math.round((best.a + best.b) / 2);
+    } else {
+      end = findQuietCutIndex(pcm, windowEnd - sampleRate, sampleRate); // no pause: quietest spot in the last 2s
+    }
+    if (end <= start) end = windowEnd; // safety: never stall
     out.push({ start, end, final: true });
     start = end;
   }
   return out;
-}
-function splitAudioForAsr(pcm, sampleRate, maxSegmentSec) {
-  return planAsrSegments(pcm, sampleRate, maxSegmentSec, 0, true).map((s) => pcm.slice(s.start, s.end));
 }
 
 // Pure: does this stretch of audio look like someone speaking, as opposed to
@@ -2474,6 +2574,43 @@ function segmentLooksLikeSpeech(seg) {
   return high >= 1.6 * Math.max(low, 1e-6);
 }
 
+// Pure: seconds of actual sound in a stretch of audio (everything that isn't a
+// pause of 150ms or more).
+function speechSeconds(seg, sampleRate) {
+  const sr = sampleRate || 16000;
+  let quiet = 0;
+  for (const p of findPauses(seg, 0, seg.length, 150)) quiet += p.b - p.a;
+  return Math.max(0, (seg.length - quiet) / sr);
+}
+
+// Pure: the model occasionally gets stuck in a loop and repeats one phrase
+// dozens of times ("رَبِّ الْعَمْدُ لِلَّهِ رَبِّ الْعَمْدُ لِلَّهِ ..."), which would
+// flood a result with invented words. A phrase (1-4 words) repeated 4+ times
+// in a row is a loop — the Quran doesn't do that back to back — so keep one
+// copy of it.
+function collapseRepeatedPhrases(text) {
+  const toks = String(text || "").split(/\s+/).filter(Boolean);
+  const key = toks.map(normalizeArabicWord);
+  const out = [];
+  let i = 0;
+  while (i < toks.length) {
+    let collapsed = false;
+    for (let n = 1; n <= 4 && !collapsed; n++) {
+      if (i + n * 4 > toks.length) break;
+      let reps = 1;
+      while (i + (reps + 1) * n <= toks.length) {
+        let same = true;
+        for (let k = 0; k < n; k++) if (key[i + k] !== key[i + reps * n + k]) { same = false; break; }
+        if (!same) break;
+        reps++;
+      }
+      if (reps >= 4) { for (let k = 0; k < n; k++) out.push(toks[i + k]); i += reps * n; collapsed = true; }
+    }
+    if (!collapsed) { out.push(toks[i]); i++; }
+  }
+  return out.join(" ");
+}
+
 async function transcribeSegment(seg) {
   if (!segmentLooksLikeSpeech(seg)) return "";
   const asr = await getAsrPipeline(() => {});
@@ -2481,7 +2618,17 @@ async function transcribeSegment(seg) {
   // than the studio audio the model is used to) and copied so the model gets
   // a plain standalone array.
   const out = await asr(normalizeGain(seg.slice()));
-  return (out && out.text) || "";
+  return collapseRepeatedPhrases((out && out.text) || "");
+}
+
+// Re-transcribe a stretch in finer pieces, cut on every pause (>=150ms) into
+// pieces of at most ~8s — used by the second look when the normal pass seems
+// to have dropped a phrase.
+async function transcribeSegmentFine(seg) {
+  const pieces = planAsrSegments(seg, 16000, { minSec: 1.2, maxSec: 8, pauseMs: 150 }, 0, true);
+  const texts = [];
+  for (const p of pieces) texts.push(await transcribeSegment(seg.subarray(p.start, p.end)));
+  return texts.join(" ");
 }
 
 // Turn any not-yet-converted captured audio into the session's 16kHz buffer,
@@ -2499,20 +2646,31 @@ async function sessionTranscribe(sess, isFinal) {
     sessionAppendPcm(sess, r);
   }
   const view = sess.pcm.subarray(0, sess.len);
-  const plan = planAsrSegments(view, 16000, ASR_SEGMENT_SECONDS, sess.doneEnd, isFinal);
+  const plan = planAsrSegments(view, 16000, null, sess.doneEnd, isFinal);
   let tail = "";
   for (const seg of plan) {
     const text = await transcribeSegment(view.subarray(seg.start, seg.end));
     if (sess.cancelled) return null;
-    if (seg.final) { sess.doneTexts.push(text); sess.doneEnd = seg.end; } else { tail = text; }
+    if (seg.final) { sess.doneTexts.push(text); sess.doneSegs.push({ start: seg.start, end: seg.end }); sess.doneEnd = seg.end; } else { tail = text; }
   }
-  return tokenizeArabic([...sess.doneTexts, tail].join(" "));
+  return tokenizeArabicWithRaw([...sess.doneTexts, tail].join(" "));
 }
 
 async function sessionCheck(sess, isFinal) {
   const said = await sessionRun(sess, () => sessionTranscribe(sess, isFinal));
   if (!said || sess.cancelled) return null;
-  return alignRecitation(sess.refWords, said);
+  const first = alignRecitation(sess.refWords, said.map((w) => w.norm), said.map((w) => w.raw));
+  if (!isFinal || !sess.doneTexts.length) return first;
+  // Final check only: look again at any stretch where a run of words went
+  // missing, in case the model dropped a phrase (see refineWithSecondLook).
+  const view = sess.pcm.subarray(0, sess.len);
+  const r = await sessionRun(sess, () => refineWithSecondLook(
+    sess.doneTexts, sess.refWords,
+    (k) => transcribeSegmentFine(view.subarray(sess.doneSegs[k].start, sess.doneSegs[k].end)),
+    () => sess.cancelled
+  ));
+  if (sess.cancelled) return null;
+  return r && r.refined ? r.alignment : first;
 }
 
 // While reciting, refresh the highlighting every few seconds — the closest a
@@ -2537,6 +2695,155 @@ function startPeriodicChecks(sess) {
     } catch { /* transient — the next tick just tries again */ }
     finally { sess.tickQueued = false; }
   }, CHECK_PERIODIC_MS);
+}
+
+// ---- Second look ----------------------------------------------------------
+// On a long stretch the model occasionally drops a whole phrase (typically the
+// first ayah of a multi-ayah segment — seen on Al-Fatihah: Bismillah vanished
+// from "Bismillah + Alhamdulillah"). We know exactly what should have been
+// said, so a run of consecutive missed words INSIDE the recited part is the
+// signature. Then only the segments that gap must live in are re-transcribed
+// in finer pieces (cut on every pause), and the result is kept only if it
+// lines up with the text better than before.
+
+// Pure: runs of >= minRun consecutive missed words within the recited part.
+function findSuspectGaps(alignment, minRun) {
+  const gaps = [];
+  let i = 0;
+  while (i < alignment.reached) {
+    if (alignment.perWord[i] === "missed") {
+      let j = i;
+      while (j + 1 < alignment.reached && alignment.perWord[j + 1] === "missed") j++;
+      if (j - i + 1 >= minRun) gaps.push({ from: i, to: j });
+      i = j + 1;
+    } else i++;
+  }
+  return gaps;
+}
+
+// Pure: which segments could the audio for this gap be in? Those from the
+// segment of the last heard word before it to the segment of the first heard
+// word after it (a gap at the very start begins at segment 0). tokSeg[j] is
+// the segment that heard word j came from.
+function segmentsForGap(gap, alignment, tokSeg, maxSegs) {
+  const sr = alignment.saidRef;
+  let prev = -1, next = -1;
+  for (let j = 0; j < sr.length; j++) {
+    if (sr[j] >= 0 && sr[j] < gap.from) prev = j;
+    if (sr[j] > gap.to && next < 0) next = j;
+  }
+  const lastSeg = tokSeg.length ? tokSeg[tokSeg.length - 1] : 0;
+  const a = prev >= 0 ? tokSeg[prev] : 0;
+  const b = next >= 0 ? tokSeg[next] : lastSeg;
+  const out = [];
+  for (let k = a; k <= Math.max(a, b) && out.length < (maxSegs || 3); k++) out.push(k);
+  return out;
+}
+
+// Re-transcribe suspect segments and keep the result only if it matches the
+// reference better. `texts` is one transcript per segment (in order);
+// `transcribeFine(segIndex)` returns a finer re-transcription of that segment.
+// Injected, so this can be tested offline with no model.
+async function refineWithSecondLook(texts, refWords, transcribeFine, isCancelled) {
+  const build = (tx) => {
+    const tokens = [], tokSeg = [];
+    tx.forEach((t, k) => { for (const w of tokenizeArabicWithRaw(t)) { tokens.push(w); tokSeg.push(k); } });
+    return { tokens, tokSeg, alignment: alignRecitation(refWords, tokens.map((w) => w.norm), tokens.map((w) => w.raw)) };
+  };
+  const quality = (a) => a.correct + CLOSE_WEIGHT * a.close;
+  let cur = build(texts), cur_texts = texts.slice(), refined = 0;
+  const tried = new Set();
+  for (let pass = 0; pass < 2; pass++) {
+    const want = new Set();
+    for (const g of findSuspectGaps(cur.alignment, 3)) for (const k of segmentsForGap(g, cur.alignment, cur.tokSeg)) if (!tried.has(k)) want.add(k);
+    if (!want.size) break;
+    const trial = cur_texts.slice();
+    let changed = false;
+    for (const k of want) {
+      tried.add(k);
+      const nt = await transcribeFine(k);
+      if (isCancelled && isCancelled()) return { texts: cur_texts, tokens: cur.tokens, alignment: cur.alignment, refined };
+      if (tokenizeArabic(nt).length > tokenizeArabic(trial[k]).length) { trial[k] = nt; changed = true; }
+    }
+    if (!changed) break;
+    const next = build(trial);
+    if (quality(next.alignment) > quality(cur.alignment)) { cur = next; cur_texts = trial; refined++; }
+  }
+  return { texts: cur_texts, tokens: cur.tokens, alignment: cur.alignment, refined };
+}
+
+// Pure: turn an alignment into an exact account of what went wrong, grouped by
+// ayah, in reading order. Only words inside the part actually recited count as
+// mistakes — words past where the reciter stopped are "not reached", not wrong.
+//   kind: "skipped" (nothing was heard for it), "wrong" (something else was
+//         heard instead), "close" (heard something very like it)
+function buildCheckReport(alignment, refDisp, ayahOf) {
+  const groups = [];
+  let mistakes = 0, close = 0;
+  for (let i = 0; i < alignment.reached; i++) {
+    const st = alignment.perWord[i];
+    if (st === "said") continue;
+    const kind = st === "close" ? "close" : (alignment.heard && alignment.heard[i] ? "wrong" : "skipped");
+    if (kind === "close") close++; else mistakes++;
+    const ayah = ayahOf ? ayahOf[i] : null;
+    let g = groups[groups.length - 1];
+    if (!g || g.ayah !== ayah) { g = { ayah, items: [] }; groups.push(g); }
+    g.items.push({ idx: i, expected: refDisp ? refDisp[i] : "", heard: alignment.heard ? alignment.heard[i] : null, kind });
+  }
+  const notReached = alignment.reached < alignment.total
+    ? { words: alignment.total - alignment.reached, fromAyah: ayahOf ? ayahOf[alignment.reached] : null }
+    : null;
+  return { mistakes, close, groups, notReached, extraWords: alignment.extraWords, reached: alignment.reached, total: alignment.total };
+}
+
+function clearCheckReport() {
+  if (dom.checkReport) { dom.checkReport.hidden = true; dom.checkReport.textContent = ""; }
+}
+
+function renderCheckReport(rep) {
+  const box = dom.checkReport;
+  if (!box) return;
+  box.textContent = "";
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  if (!rep.reached) { box.hidden = true; return; }
+  const head = el("div", "cr-head");
+  if (!rep.mistakes && !rep.close) {
+    head.textContent = `No mistakes found — all ${rep.reached} words right ✅`;
+  } else {
+    const parts = [];
+    if (rep.mistakes) parts.push(`${rep.mistakes} mistake${rep.mistakes === 1 ? "" : "s"}`);
+    if (rep.close) parts.push(`${rep.close} close`);
+    head.textContent = parts.join(" · ") + " — tap one to find it in the page";
+  }
+  box.appendChild(head);
+  for (const g of rep.groups) {
+    const sec = el("div", "cr-ayah");
+    sec.appendChild(el("div", "cr-ayah-num", g.ayah ? `Ayah ${g.ayah}` : "Ayah"));
+    const ul = el("ul", "cr-list");
+    for (const it of g.items) {
+      const li = el("li", `cr-item cr-${it.kind}`);
+      li.dataset.idx = String(it.idx);
+      li.appendChild(el("span", "cr-tag", it.kind === "skipped" ? "Not heard" : it.kind === "wrong" ? "Said differently" : "Close"));
+      const exp = el("span", "cr-exp", it.expected); exp.lang = "ar"; exp.dir = "rtl";
+      li.appendChild(exp);
+      if (it.heard) {
+        li.appendChild(el("span", "cr-arrow", it.kind === "close" ? "heard" : "heard instead"));
+        const hd = el("span", "cr-heard", it.heard); hd.lang = "ar"; hd.dir = "rtl";
+        li.appendChild(hd);
+      }
+      ul.appendChild(li);
+    }
+    sec.appendChild(ul);
+    box.appendChild(sec);
+  }
+  if (rep.notReached) {
+    box.appendChild(el("p", "cr-note", `You stopped ${rep.notReached.fromAyah ? `before ayah ${rep.notReached.fromAyah}` : "early"} — ${rep.notReached.words} word${rep.notReached.words === 1 ? "" : "s"} not reached.`));
+  }
+  if (rep.extraWords >= 3) {
+    box.appendChild(el("p", "cr-note", `${rep.extraWords} extra words were heard that aren't on this page (could be background noise).`));
+  }
+  box.appendChild(el("p", "cr-note", "This is what the on-device checker heard — it can occasionally mishear, so a flagged word is worth a second listen, not a verdict."));
+  box.hidden = false;
 }
 
 function checkSummaryText(a) {
@@ -2568,6 +2875,7 @@ async function runMemorizationCheck() {
     renderCheckResultWords(a);
     dom.checkResult.hidden = false;
     dom.checkResult.textContent = checkSummaryText(a);
+    renderCheckReport(buildCheckReport(a, sess.refDisp, sess.ayahOf));
     dom.checkStatus.textContent = "";
   } catch (err) {
     if (!sess.cancelled) dom.checkStatus.textContent = "Couldn't run the checker (offline and not yet downloaded?).";
@@ -2589,6 +2897,7 @@ function toggleCheckRecording() {
     // still-running work from it must not paint over this one.
     if (checkRec.session) checkRec.session.cancelled = true;
     clearCheckHighlighting();
+    clearCheckReport();
     dom.checkResult.hidden = true;
     dom.checkRecordBtn.disabled = true;
     startCheckRecording().then(() => {
@@ -2621,6 +2930,7 @@ function resetCheckState() {
   dom.checkStatus.textContent = "";
   setCheckPageNavDisabled(false);
   clearCheckHighlighting();
+  clearCheckReport();
 }
 
 /* ================================================================

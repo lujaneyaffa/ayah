@@ -269,6 +269,37 @@ main { display: block; }
 .check-level { height: 6px; margin: 12px auto 0; max-width: 260px; background: var(--line); border-radius: 999px; overflow: hidden; }
 .check-level-fill { width: 0; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.08s linear; }
 #checkRecordBtn.is-recording { background-color: var(--danger); color: #fff; border-color: var(--danger); }
+/* Mistakes report shown after Stop & Check */
+.check-report {
+  margin: 4px 0 12px;
+  padding: 10px 12px 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  font-size: 14px;
+}
+.cr-head { font-weight: 700; margin-bottom: 8px; }
+.cr-ayah { margin: 6px 0 10px; }
+.cr-ayah-num { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.02em; margin-bottom: 4px; }
+.cr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cr-item {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+  padding: 8px 10px; border-radius: 10px; background: var(--card);
+  border: 1px solid var(--line); border-inline-start: 4px solid var(--danger);
+  cursor: pointer;
+}
+.cr-item.cr-close { border-inline-start-color: var(--star); }
+.cr-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--danger); }
+.cr-close .cr-tag { color: var(--star); }
+.cr-exp, .cr-heard { font-family: "Noto Naskh Arabic", "Amiri", "Scheherazade New", "Traditional Arabic", serif; font-size: 22px; line-height: 1.5; }
+.cr-exp { color: var(--ink); }
+.cr-heard { color: var(--muted); }
+.cr-arrow { font-size: 12px; color: var(--muted); }
+.cr-note { margin: 4px 0 8px; font-size: 12px; color: var(--muted); }
+.qword-flash { animation: qword-flash 1.4s ease; }
+@keyframes qword-flash { 0%, 100% { background-color: transparent; } 20%, 60% { background-color: var(--word-hl); } }
+.check-credit { margin: 14px 0 0; font-size: 12px; color: var(--muted); text-align: center; }
+.check-credit a { color: var(--muted); }
 .check-result {
   margin: 10px 0 0;
   font-size: 14px;
