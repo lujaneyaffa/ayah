@@ -212,15 +212,15 @@ main { display: block; }
 .qword-active { background-color: var(--word-hl); }
 /* Memorization check: per-word verdict after comparing a recitation */
 .qword-correct { color: var(--accent); }
+.qword-close { color: var(--star); text-decoration: underline dotted; text-underline-offset: 0.15em; }
 .qword-missed { color: var(--danger); text-decoration: underline wavy; text-underline-offset: 0.15em; }
 /* Check tab page view: each ayah gets its own tint so ayah boundaries are
    obvious at a glance across a whole page, not just the small number badge. */
 .ayah-group {
-  display: inline;
-  padding: 0.15em 0.2em;
-  border-radius: 0.5em;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
+  display: block;
+  padding: 0.2em 0.7em;
+  margin: 0.35em 0;
+  border-radius: 0.7em;
 }
 .ayah-tint-0 { background: var(--tint-0); }
 .ayah-tint-1 { background: var(--tint-1); }
@@ -246,6 +246,8 @@ main { display: block; }
   margin-top: 10px;
 }
 .check-status { color: var(--muted); font-size: 0.9em; }
+.check-level { height: 6px; margin: 12px auto 0; max-width: 260px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.check-level-fill { width: 0; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.08s linear; }
 #checkRecordBtn.is-recording { background-color: var(--danger); color: #fff; border-color: var(--danger); }
 .check-result {
   margin: 14px 0 0;

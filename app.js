@@ -144,7 +144,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v38"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v40"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -234,6 +234,7 @@ const state = {
   wordTimingCache: loadJSON(LS_WORDTIMING, {}),
   wordTiming: null, // { key, reciterId, segs, prop } — active word-highlight timing
   wordCountFor: 0, // word count of the currently rendered ayah (for fallback timing)
+  loadedAudioId: null, // "reciter:verseKey" currently loaded in the <audio> element
   checkRefWords: [], // display-form words of the page shown on the Check tab
   checkPage: Math.max(1, Math.min(TOTAL_PAGES, Number(loadJSON(LS_CHECK_PAGE, 1)) || 1)),
   autoPlay: loadJSON(LS_AUTO, false),
@@ -314,6 +315,8 @@ const dom = {
   checkArabic: $("#checkArabic"),
   checkRecordBtn: $("#checkRecordBtn"),
   checkRestartBtn: $("#checkRestartBtn"),
+  checkLevel: $("#checkLevel"),
+  checkLevelFill: $("#checkLevelFill"),
   checkStatus: $("#checkStatus"),
   checkResult: $("#checkResult"),
   checkPageInput: $("#checkPageInput"),
@@ -741,16 +744,34 @@ async function loadAudioUrl(key, reciterId) {
   return full;
 }
 
+let audioToken = 0;
 async function refreshAudio(key) {
   const btn = dom.btnPlay;
+  const el = dom.audioEl;
+  const token = ++audioToken;
+  const audioId = `${state.reciterId}:${key}`;
+  // This verse is already loaded AND actively playing: renderRead() runs on
+  // plenty of things that have nothing to do with the audio (returning to the
+  // Read tab, toggling English/Arabic, every cloud-sync tick, the app coming
+  // back to the foreground) and every one of them used to land here and
+  // reassign src + play(), snapping the recitation back to 0:00 mid-verse —
+  // the "random cut-offs". Leave live playback completely alone.
+  const playingThis = () => state.loadedAudioId === audioId && !el.paused && !el.ended;
   loadWordTiming(key).catch(() => {}); // fire-and-forget; highlight data for this verse
-  btn.disabled = true;
-  dom.audioFill.style.width = "0%";
+  if (!playingThis()) {
+    // Only a real verse change resets the progress bar / briefly disables
+    // Play — doing it on every re-render made the button flicker disabled,
+    // swallowing a tap in the car.
+    btn.disabled = true;
+    dom.audioFill.style.width = "0%";
+  }
   try {
     const url = await loadAudioUrl(key, state.reciterId);
+    if (token !== audioToken) return; // a newer verse was requested meanwhile
     btn.dataset.url = url;
     btn.disabled = false;
     btn.title = "Play verse recitation";
+    if (playingThis()) return;
     // Only CONTINUE an already-playing session (state.wantPlaying already
     // true from an actual Play tap) — Auto-play/Loop must never spontaneously
     // start audio on their own, or opening/reconnecting to the app with
@@ -758,6 +779,7 @@ async function refreshAudio(key) {
     // no user action at all. Re-checked live (not a snapshot from before
     // this await) so a Pause click during the fetch always wins too.
     if (state.wantPlaying) {
+      state.loadedAudioId = audioId;
       dom.audioEl.src = url;
       dom.audioEl.playbackRate = state.speed;
       dom.audioEl.play().then(() => {
@@ -793,6 +815,7 @@ function togglePlay() {
     dom.pauseIcon.style.display = "none";
   } else {
     state.wantPlaying = true;
+    state.loadedAudioId = `${state.reciterId}:${state.currentKey}`;
     if (el.src !== url) el.src = url;
     el.playbackRate = state.speed;
     state.repeatCount = 0;
@@ -1976,39 +1999,107 @@ function tokenizeArabic(text) {
   return String(text || "").split(/\s+/).map(normalizeArabicWord).filter(Boolean);
 }
 
-// Pure: word-level LCS alignment between the reference verse and what the
-// mic heard. Returns "said"/"missed" per reference word (index-aligned with
-// refWords, so callers can zip it against the original diacritic-ed words
-// for display) plus a count of words said that aren't in the verse at all.
+// Pure: similarity of two already-normalized words, 0..1 (1 = identical).
+// Words shorter than 3 letters only ever match exactly — one wrong letter in a
+// two-letter word is a different word, not a near miss.
+function wordSimilarity(a, b) {
+  if (a === b) return 1;
+  const n = a.length, m = b.length;
+  if (Math.min(n, m) < 3) return 0;
+  let prev = new Array(m + 1);
+  for (let j = 0; j <= m; j++) prev[j] = j;
+  for (let i = 1; i <= n; i++) {
+    const cur = [i];
+    for (let j = 1; j <= m; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return 1 - prev[m] / Math.max(n, m);
+}
+const CLOSE_MIN_SIM = 0.75; // "heard something very like it" — flagged, not counted as right
+const CLOSE_WEIGHT = 0.6;
+function matchWeight(sim) { return sim === 1 ? 1 : sim >= CLOSE_MIN_SIM ? CLOSE_WEIGHT : 0; }
+
+// Pure: word-level alignment between the reference text and what the mic
+// heard. Beyond plain word-for-word matching it tolerates what a speech
+// model really does to Quranic text: a one-letter slip scores as "close"
+// rather than flat wrong, and a compound the Quran.com word list writes as one
+// word but the model splits in two (يَا أَيُّهَا) — or the reverse — still
+// matches. Returns per reference word "said" | "close" | "missed"
+// (index-aligned with refWords, so callers zip it against the display words),
+// how far into the text the reciter got (`reached`: words past it are simply
+// not recited yet, not mistakes) and how many heard words matched nothing.
 function alignRecitation(refWords, saidWords) {
   const n = refWords.length, m = saidWords.length;
-  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= m; j++) {
-      dp[i][j] = refWords[i - 1] === saidWords[j - 1]
-        ? dp[i - 1][j - 1] + 1
-        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+  const W = m + 2;
+  // dp[i][j] = best score aligning refWords[i..] with saidWords[j..]. Solved
+  // from the END backwards and then read from the FRONT, so that when two
+  // alignments score the same (a phrase repeated on the page, or only a few
+  // words heard so far) the EARLIEST one wins — a reciter works through the
+  // page from the top, so a heard "الرحمن الرحيم" belongs to the Bismillah
+  // they just recited, not to an ayah further down.
+  const dp = new Float64Array((n + 2) * W); // 64-bit on purpose: 32-bit rounding turns equal scores into unequal ones and breaks the tie-breaking below
+  const mv = new Uint8Array((n + 2) * W); // 1 skip-ref, 2 skip-said, 3 one:one, 4 one ref:two said, 5 two ref:one said
+  const at = (i, j) => i * W + j;
+  for (let i = n; i >= 0; i--) {
+    for (let j = m; j >= 0; j--) {
+      if (i === n && j === m) continue;
+      let best = -1, move = 0;
+      // candidates in tie-break priority order (strict > keeps the earlier one)
+      if (i < n && j < m) {
+        const w = matchWeight(wordSimilarity(refWords[i], saidWords[j]));
+        if (w > 0 && dp[at(i + 1, j + 1)] + w > best) { best = dp[at(i + 1, j + 1)] + w; move = 3; }
+      }
+      if (i < n && j + 1 < m) {
+        const w4 = matchWeight(wordSimilarity(refWords[i], saidWords[j] + saidWords[j + 1]));
+        if (w4 > 0 && dp[at(i + 1, j + 2)] + w4 > best) { best = dp[at(i + 1, j + 2)] + w4; move = 4; }
+      }
+      if (i + 1 < n && j < m) {
+        const w5 = matchWeight(wordSimilarity(refWords[i] + refWords[i + 1], saidWords[j]));
+        if (w5 > 0 && dp[at(i + 2, j + 1)] + 2 * w5 > best) { best = dp[at(i + 2, j + 1)] + 2 * w5; move = 5; }
+      }
+      if (j < m && dp[at(i, j + 1)] > best) { best = dp[at(i, j + 1)]; move = 2; }
+      if (i < n && dp[at(i + 1, j)] > best) { best = dp[at(i + 1, j)]; move = 1; }
+      dp[at(i, j)] = best;
+      mv[at(i, j)] = move;
     }
   }
   const perWord = refWords.map(() => "missed");
-  let i = n, j = m, extraWords = 0;
-  while (i > 0 && j > 0) {
-    if (refWords[i - 1] === saidWords[j - 1]) {
-      perWord[i - 1] = "said";
-      i--; j--;
-    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
-      i--;
+  const grade = (sim) => (sim === 1 ? "said" : "close");
+  let i = 0, j = 0, extraWords = 0;
+  while (i < n || j < m) {
+    const move = mv[at(i, j)];
+    if (move === 3) {
+      perWord[i] = grade(wordSimilarity(refWords[i], saidWords[j]));
+      i++; j++;
+    } else if (move === 4) {
+      perWord[i] = grade(wordSimilarity(refWords[i], saidWords[j] + saidWords[j + 1]));
+      i++; j += 2;
+    } else if (move === 5) {
+      const g = grade(wordSimilarity(refWords[i] + refWords[i + 1], saidWords[j]));
+      perWord[i] = g; perWord[i + 1] = g;
+      i += 2; j++;
+    } else if (move === 2 || i >= n) {
+      extraWords++; j++;
     } else {
-      j--; extraWords++;
+      i++;
     }
   }
-  extraWords += j;
-  const correct = perWord.filter((s) => s === "said").length;
+  const correct = perWord.filter((x) => x === "said").length;
+  const close = perWord.filter((x) => x === "close").length;
+  let reached = 0;
+  perWord.forEach((x, idx) => { if (x !== "missed") reached = idx + 1; });
   return {
     perWord,
     correct,
-    total: refWords.length,
-    accuracy: refWords.length ? correct / refWords.length : 0,
+    close,
+    total: n,
+    reached,
+    accuracy: n ? (correct + close * CLOSE_WEIGHT) / n : 0,
+    // accuracy over just the part recited — stopping half way through a page
+    // and getting that half right is a good recitation, not a bad one
+    reachedAccuracy: reached ? (correct + close * CLOSE_WEIGHT) / reached : 0,
     extraWords
   };
 }
@@ -2072,15 +2163,42 @@ function normalizeGain(pcm) {
   return out;
 }
 
-const checkRec = { ctx: null, stream: null, node: null, chunks: [], sampleRate: 16000, active: false, starting: false };
-const CHECK_MAX_SECONDS = 1200; // 20 min safety cap — a full page can take a few minutes to recite
-const CHECK_PERIODIC_MS = 8000; // how often the in-progress check re-transcribes while reciting
-let checkPeriodicTimer = null;
-let checkPeriodicBusy = false;
+const CHECK_MAX_SECONDS = 600; // 10 min safety cap — a full page is a few minutes; keeps a forgotten recording from growing forever
+const CHECK_PERIODIC_MS = 5000; // how often the in-progress check refreshes while reciting
+const ASR_SEGMENT_SECONDS = 7; // see splitAudioForAsr for why this model needs short segments
+const ASR_CUT_SEARCH_SECONDS = 2; // how far either side of a segment boundary to look for a pause to cut on
 
-// Pure-ish: concatenate the Float32 chunks captured so far. Used both by the
-// final stop-and-check and by each in-progress periodic peek, which must
-// NOT touch checkRec.chunks itself (recording keeps running underneath it).
+// One recording attempt. Everything async that belongs to an attempt checks
+// `cancelled` after every await, so a Restart (or starting a new take, or
+// leaving the tab) can never have a stale result from the previous attempt
+// paint itself back onto the page afterwards.
+let checkSessionSeq = 0;
+const checkRec = {
+  ctx: null, stream: null, node: null, wake: null,
+  active: false, starting: false, abortStart: false,
+  level: 0, heardSound: false, session: null, autoStopTimer: null, silenceTimer: null
+};
+let checkPeriodicTimer = null;
+
+function newCheckSession(sampleRate) {
+  return {
+    id: ++checkSessionSeq,
+    cancelled: false,
+    sampleRate,
+    raw: [],            // captured chunks at the device rate, not yet converted
+    rawSamples: 0,
+    pcm: new Float32Array(16000 * 30), // everything so far at 16kHz (grows)
+    len: 0,
+    doneEnd: 0,         // audio before this is finished: its transcript is cached below
+    doneTexts: [],
+    refWords: (state.checkRefWords || []).map(normalizeArabicWord), // frozen at start
+    page: state.checkPage,
+    chain: Promise.resolve(),
+    tickQueued: false
+  };
+}
+
+// Pure-ish: concatenate Float32 chunks.
 function mergeAudioChunks(chunks) {
   const total = chunks.reduce((a, c) => a + c.length, 0);
   const merged = new Float32Array(total);
@@ -2089,58 +2207,172 @@ function mergeAudioChunks(chunks) {
   return merged;
 }
 
+// Seconds of audio in a session, counting both what's been converted to 16kHz
+// and what's still waiting at the device rate.
+function sessionSeconds(sess) {
+  return sess.len / 16000 + sess.rawSamples / sess.sampleRate;
+}
+
+function sessionAppendPcm(sess, arr) {
+  if (sess.len + arr.length > sess.pcm.length) {
+    const bigger = new Float32Array(Math.max(sess.pcm.length * 2, sess.len + arr.length));
+    bigger.set(sess.pcm.subarray(0, sess.len));
+    sess.pcm = bigger;
+  }
+  sess.pcm.set(arr, sess.len);
+  sess.len += arr.length;
+}
+
+// Everything that touches a session's audio/transcript runs one at a time.
+function sessionRun(sess, fn) {
+  const p = sess.chain.then(fn, fn);
+  sess.chain = p.catch(() => {});
+  return p;
+}
+
 function setCheckPageNavDisabled(disabled) {
   if (dom.checkPagePrev) dom.checkPagePrev.disabled = disabled;
   if (dom.checkPageNext) dom.checkPageNext.disabled = disabled;
   if (dom.checkPageInput) dom.checkPageInput.disabled = disabled;
 }
 
+async function acquireCheckWakeLock() {
+  // A phone propped up in the car will dim and lock its screen mid-recitation,
+  // and a locked screen silently stops the microphone.
+  try {
+    if (navigator.wakeLock) checkRec.wake = await navigator.wakeLock.request("screen");
+  } catch { /* not allowed / not supported — recording still works while the screen stays on */ }
+}
+
+// Records on the AUDIO thread. The speech model runs on the main thread for
+// seconds at a time, and a main-thread ScriptProcessorNode starves during
+// that: its callbacks are late, audio is dropped and the recording ends up
+// with holes in it (measured: a continuous recitation captured as blocks of
+// speech separated by dead silence) — the recognizer then "hears" half the
+// words. A worklet keeps recording regardless and just posts finished blocks;
+// if the page is busy they queue up and none are lost.
+const CAPTURE_WORKLET_SRC = `
+class AyahRecorder extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(4096); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch) {
+      for (let i = 0; i < ch.length; i++) {
+        this.buf[this.n++] = ch[i];
+        if (this.n === this.buf.length) {
+          const out = this.buf;
+          this.port.postMessage(out, [out.buffer]);
+          this.buf = new Float32Array(4096);
+          this.n = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("ayah-recorder", AyahRecorder);
+`;
+
+// Connect a capture node to `source` that calls onChunk(Float32Array) with
+// every block of audio. Prefers the worklet; falls back to the deprecated
+// (main-thread) ScriptProcessorNode only where worklets don't exist.
+async function createCaptureNode(ctx, source, sink, onChunk) {
+  if (ctx.audioWorklet && typeof AudioWorkletNode !== "undefined") {
+    try {
+      const url = URL.createObjectURL(new Blob([CAPTURE_WORKLET_SRC], { type: "application/javascript" }));
+      await ctx.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      const node = new AudioWorkletNode(ctx, "ayah-recorder", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      node.port.onmessage = (e) => onChunk(new Float32Array(e.data));
+      source.connect(node);
+      node.connect(sink);
+      return node;
+    } catch { /* fall through to ScriptProcessor */ }
+  }
+  const node = ctx.createScriptProcessor(4096, 1, 1);
+  node.onaudioprocess = (e) => onChunk(new Float32Array(e.inputBuffer.getChannelData(0)));
+  source.connect(node);
+  node.connect(sink);
+  return node;
+}
+
 async function startCheckRecording() {
-  // Guards against a double-tap/double-click starting two overlapping
-  // recordings (two live mic streams, two AudioContexts) before the first
-  // getUserMedia await even resolves.
+  // Guards against a double-tap starting two overlapping recordings (two live
+  // mic streams) before the first getUserMedia await even resolves.
   if (checkRec.active || checkRec.starting) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     toast("Microphone not available in this browser");
     return;
   }
   checkRec.starting = true;
+  checkRec.abortStart = false;
+  let stream;
   try {
-    checkRec.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Noise suppression + auto gain are the browser's own, and are exactly
+    // what a car / room needs; asked for explicitly so they're never left off.
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+    });
   } catch {
     toast("Microphone permission denied");
     checkRec.starting = false;
     return;
   }
+  if (checkRec.abortStart) { // Restart was pressed while the permission prompt was up
+    stream.getTracks().forEach((t) => t.stop());
+    checkRec.starting = false;
+    return;
+  }
+  checkRec.stream = stream;
   const Ctx = window.AudioContext || window.webkitAudioContext;
   checkRec.ctx = new Ctx();
-  // iOS/strict browsers can create a context in "suspended" state, especially
-  // after the getUserMedia permission prompt's delay eats the user-gesture
-  // window — left suspended, onaudioprocess never fires and nothing gets
-  // captured at all, silently. Explicitly resuming is safe to call regardless.
+  // iOS/strict browsers can create a context "suspended" (the permission
+  // prompt's delay eats the user-gesture window) — left suspended,
+  // onaudioprocess never fires and nothing is captured, silently.
   await checkRec.ctx.resume().catch(() => {});
-  checkRec.sampleRate = checkRec.ctx.sampleRate;
-  checkRec.chunks = [];
-  const source = checkRec.ctx.createMediaStreamSource(checkRec.stream);
-  // ScriptProcessorNode is deprecated but is the one capture path that works
-  // reliably on older iOS Safari without shipping a separate AudioWorklet
-  // module file. It only fires while connected through to a destination, so
-  // route through a silent gain to avoid mic feedback through the speakers.
-  checkRec.node = checkRec.ctx.createScriptProcessor(4096, 1, 1);
-  checkRec.node.onaudioprocess = (e) => {
-    checkRec.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-  };
-  const silence = checkRec.ctx.createGain();
+  const sess = newCheckSession(checkRec.ctx.sampleRate);
+  checkRec.session = sess;
+  checkRec.level = 0;
+  checkRec.heardSound = false;
+  const source = checkRec.ctx.createMediaStreamSource(stream);
+  const silence = checkRec.ctx.createGain(); // keeps the capture node pulled without any feedback to the speakers
   silence.gain.value = 0;
-  source.connect(checkRec.node);
-  checkRec.node.connect(silence);
   silence.connect(checkRec.ctx.destination);
+  checkRec.node = await createCaptureNode(checkRec.ctx, source, silence, (data) => {
+    if (sess.cancelled) return;
+    sess.raw.push(data);
+    sess.rawSamples += data.length;
+    let peak = 0;
+    for (let i = 0; i < data.length; i++) { const v = Math.abs(data[i]); if (v > peak) peak = v; }
+    checkRec.level = Math.max(peak, checkRec.level * 0.85);
+    if (peak > 0.01 && !checkRec.heardSound) {
+      checkRec.heardSound = true;
+      if (dom.checkStatus.textContent.startsWith("Waiting to hear you")) dom.checkStatus.textContent = "Listening…";
+    }
+    if (dom.checkLevelFill) dom.checkLevelFill.style.width = Math.min(100, checkRec.level * 300) + "%";
+  });
+  if (checkRec.abortStart || sess.cancelled) { // Restart / leaving the tab happened while the recorder was starting up
+    try { checkRec.node.disconnect(); } catch { /* ignore */ }
+    checkRec.ctx.close().catch(() => {});
+    stream.getTracks().forEach((t) => t.stop());
+    checkRec.starting = false;
+    return;
+  }
   checkRec.active = true;
   checkRec.starting = false;
   setCheckPageNavDisabled(true); // the page being checked can't change mid-recording
+  if (dom.checkLevel) dom.checkLevel.hidden = false;
+  acquireCheckWakeLock();
   checkRec.autoStopTimer = setTimeout(() => {
     if (checkRec.active) runMemorizationCheck();
   }, CHECK_MAX_SECONDS * 1000);
+  // "Why isn't it hearing me" is the most common failure — say so instead of
+  // sitting there looking like it's listening.
+  checkRec.silenceTimer = setTimeout(() => {
+    if (checkRec.active && !checkRec.heardSound) {
+      dom.checkStatus.textContent = "Waiting to hear you… (is your microphone muted or blocked?)";
+    }
+  }, 6000);
   // Warm up the model the moment recording starts, so it's likely ready by
   // the first periodic check instead of only starting the ~130MB download
   // once the user taps Stop.
@@ -2151,18 +2383,23 @@ async function startCheckRecording() {
   }).catch(() => {});
 }
 
-function stopCheckRecordingRaw() {
+// Stop the microphone and timers. Leaves the session (its audio + cached
+// transcripts) intact so the final check can still use it.
+function stopCheckCapture() {
   clearTimeout(checkRec.autoStopTimer);
+  clearTimeout(checkRec.silenceTimer);
   clearInterval(checkPeriodicTimer);
-  setCheckPageNavDisabled(false);
-  if (!checkRec.active) return null;
+  if (checkRec.wake) { checkRec.wake.release().catch(() => {}); checkRec.wake = null; }
+  if (dom.checkLevel) dom.checkLevel.hidden = true;
+  if (!checkRec.active) return;
   checkRec.active = false;
-  checkRec.node.disconnect();
+  try {
+    if (checkRec.node.port) { checkRec.node.port.onmessage = null; checkRec.node.port.close(); }
+    else checkRec.node.onaudioprocess = null;
+    checkRec.node.disconnect();
+  } catch { /* already gone */ }
   checkRec.ctx.close().catch(() => {});
   checkRec.stream.getTracks().forEach((t) => t.stop());
-  const merged = mergeAudioChunks(checkRec.chunks);
-  checkRec.chunks = [];
-  return { pcm: merged, sampleRate: checkRec.sampleRate };
 }
 
 let checkPageToken = 0;
@@ -2202,8 +2439,10 @@ async function renderCheckPage(pageNumber) {
     dom.checkSurah.textContent = firstSurah === lastSurah ? firstSurah : `${firstSurah} – ${lastSurah}`;
     const allWords = [];
     const TINT_COUNT = 6;
+    // One row per ayah (each its own tinted block) so where an ayah starts and
+    // ends is obvious at a glance across the whole page.
     data.verses.forEach((v, ayahIdx) => {
-      const group = document.createElement("span");
+      const group = document.createElement("div");
       group.className = `ayah-group ayah-tint-${ayahIdx % TINT_COUNT}`;
       v.words.forEach((w) => {
         const span = document.createElement("span");
@@ -2218,7 +2457,6 @@ async function renderCheckPage(pageNumber) {
       badge.textContent = String(parseKey(v.key).ayah);
       group.appendChild(badge);
       dom.checkArabic.appendChild(group);
-      dom.checkArabic.appendChild(document.createTextNode(" "));
     });
     state.checkRefWords = allWords;
     dom.checkStatus.textContent = "";
@@ -2238,16 +2476,21 @@ function goCheckPage(delta) {
   renderCheckPage(next);
 }
 
+// Paint a result. Words beyond `reached` are simply not recited yet — left
+// neutral, never red — so live checking doesn't paint the whole unread page
+// as mistakes.
 function renderCheckResultWords(alignment) {
   const spans = dom.checkArabic.querySelectorAll(".qword");
   spans.forEach((span, i) => {
-    span.classList.remove("qword-correct", "qword-missed");
-    span.classList.add(alignment.perWord[i] === "said" ? "qword-correct" : "qword-missed");
+    span.classList.remove("qword-correct", "qword-close", "qword-missed");
+    if (i >= alignment.reached) return;
+    const st = alignment.perWord[i];
+    span.classList.add(st === "said" ? "qword-correct" : st === "close" ? "qword-close" : "qword-missed");
   });
 }
 
 function clearCheckHighlighting() {
-  dom.checkArabic.querySelectorAll(".qword").forEach((s) => s.classList.remove("qword-correct", "qword-missed"));
+  dom.checkArabic.querySelectorAll(".qword").forEach((s) => s.classList.remove("qword-correct", "qword-close", "qword-missed"));
 }
 
 // Pure: index of the quietest short window near targetIdx, within
@@ -2266,99 +2509,182 @@ function findQuietCutIndex(pcm, targetIdx, searchRadius) {
   }
   return bestIdx;
 }
-// Pure: split long audio into segments no longer than maxSegmentSec,
-// cutting at the quietest nearby point rather than an arbitrary sample.
+
+// Pure: plan how to cut audio (from fromIdx on) into segments no longer than
+// about maxSegmentSec, each cut on the quietest nearby point rather than an
+// arbitrary sample. A cut can only be *decided* once the audio after it is
+// available (we look searchSec ahead for a pause), so while recording is still
+// going the segments before that are `final` (safe to cache forever) and the
+// last one is provisional and gets re-done as more audio arrives. When the
+// recording has ended (isFinal), everything is final.
 //
-// Whisper's own long-form chunking (chunk_length_s/stride_length_s) merges
-// overlapping windows using the model's timestamp tokens, which this narrow
-// Quran-only fine-tune doesn't generate reliably (return_timestamps mode
-// produces garbage on it) — so its automatic long-form path silently drops
-// or garbles whole phrases. A single-pass call is solid up to a point, but
-// beyond roughly 10s on Quranic recitation specifically (short, repetitive,
-// formulaic phrases like "الرحمن الرحيم" recurring seconds apart) the model
-// tends to drift and skip or repeat-suppress a phrase it just "heard"
-// moments earlier — a known Whisper long-form failure mode. Splitting into
-// short segments ourselves and transcribing each independently avoids both
-// problems; the trade-off is an occasional clipped word right at a segment
-// boundary, which a real reciter's natural pauses make rare in practice.
-function splitAudioForAsr(pcm, sampleRate, maxSegmentSec) {
+// Why segments at all: Whisper's own long-form chunking
+// (chunk_length_s/stride_length_s) merges overlapping windows using the
+// model's timestamp tokens, which this narrow Quran-only fine-tune doesn't
+// generate reliably (return_timestamps mode produces garbage on it) — so its
+// automatic long-form path silently drops or garbles whole phrases. A
+// single-pass call is solid up to a point, but beyond roughly 10s on Quranic
+// recitation specifically (short, repetitive, formulaic phrases like
+// "الرحمن الرحيم" recurring seconds apart) the model tends to drift and skip or
+// repeat-suppress a phrase it just "heard" moments earlier — a known Whisper
+// long-form failure mode. Short segments transcribed independently avoid both.
+function planAsrSegments(pcm, sampleRate, maxSegmentSec, fromIdx, isFinal, searchSec) {
   const maxLen = Math.round(maxSegmentSec * sampleRate);
-  if (pcm.length <= maxLen) return [pcm];
-  const segments = [];
-  let start = 0;
+  const radius = Math.round((searchSec === undefined ? ASR_CUT_SEARCH_SECONDS : searchSec) * sampleRate);
+  const out = [];
+  let start = fromIdx || 0;
   while (start < pcm.length) {
-    let end = Math.min(pcm.length, start + maxLen);
-    if (end < pcm.length) end = findQuietCutIndex(pcm, end, sampleRate * 2);
-    if (end <= start) end = Math.min(pcm.length, start + maxLen); // safety: never stall
-    segments.push(pcm.slice(start, end));
+    const target = start + maxLen;
+    if (target >= pcm.length) { out.push({ start, end: pcm.length, final: !!isFinal }); break; }
+    if (!isFinal && target + radius > pcm.length) { out.push({ start, end: target, final: false }); break; }
+    let end = findQuietCutIndex(pcm, target, radius);
+    if (end <= start) end = target; // safety: never stall
+    out.push({ start, end, final: true });
     start = end;
   }
-  return segments;
+  return out;
+}
+function splitAudioForAsr(pcm, sampleRate, maxSegmentSec) {
+  return planAsrSegments(pcm, sampleRate, maxSegmentSec, 0, true).map((s) => pcm.slice(s.start, s.end));
 }
 
-const ASR_SEGMENT_SECONDS = 8; // see splitAudioForAsr for why this model needs short segments
-
-// Shared by the periodic in-progress peek and the final stop-and-check.
-async function checkAudioAgainstPage(pcm, sampleRate) {
-  const audio16k = normalizeGain(await resampleTo16k(pcm, sampleRate));
-  const asr = await getAsrPipeline(() => {});
-  const segments = splitAudioForAsr(audio16k, 16000, ASR_SEGMENT_SECONDS);
-  const texts = [];
-  for (const seg of segments) {
-    if (seg.length < 1600) continue; // <0.1s scrap left over from a cut — skip, avoids hallucinating on near-silence
-    const out = await asr(seg);
-    texts.push(out.text);
+// Pure: does this stretch of audio look like someone speaking, as opposed to
+// silence or steady hiss / room noise? Feeding non-speech to the model makes
+// it invent words, and an invented word can match the text by accident and be
+// marked "said" when nothing was said — the worst failure a memorization
+// checker can have. Speech (even sustained recitation, which has few real
+// gaps) has loud stretches well above its quietest windows: measured on real
+// recitation, the loudest 5% of 50ms windows sit 5-10x above the quietest 5%,
+// against ~1.05x for steady noise. The threshold is set far below real speech
+// (1.6x, so speech only ~4 dB above a noisy car still passes) because
+// dropping real recitation is worse than letting some noise through: only
+// clearly non-speech audio is skipped. (An earlier version compared the
+// loud windows to the 25th-percentile window instead and threw out a clean
+// recording of the Bismillah.)
+function segmentLooksLikeSpeech(seg) {
+  const win = 800; // 50ms at 16kHz
+  if (seg.length < win * 5) return false;
+  let peak = 0;
+  const rms = [];
+  for (let i = 0; i + win <= seg.length; i += win) {
+    let sum = 0;
+    for (let j = i; j < i + win; j++) {
+      const v = seg[j];
+      sum += v * v;
+      const a = Math.abs(v);
+      if (a > peak) peak = a;
+    }
+    rms.push(Math.sqrt(sum / win));
   }
-  const saidWords = tokenizeArabic(texts.join(" "));
-  const refWords = (state.checkRefWords || []).map(normalizeArabicWord);
-  return alignRecitation(refWords, saidWords);
+  if (peak < 0.012) return false; // digital near-silence
+  rms.sort((x, y) => x - y);
+  const low = rms[Math.floor(rms.length * 0.05)];
+  const high = rms[Math.floor(rms.length * 0.95)];
+  return high >= 1.6 * Math.max(low, 1e-6);
 }
 
-// While reciting, periodically re-transcribe everything said so far and
-// update the highlighting — the closest a non-streaming model can get to
-// "live" feedback. Each tick re-processes the WHOLE recording (Whisper
-// can't pick up where it left off), so on a long page later ticks take
-// longer; the busy-guard just skips a tick rather than piling them up, so
-// it naturally slows down instead of falling behind.
-function startPeriodicChecks() {
+async function transcribeSegment(seg) {
+  if (!segmentLooksLikeSpeech(seg)) return "";
+  const asr = await getAsrPipeline(() => {});
+  // Each segment is levelled on its own (a phone mic is often much quieter
+  // than the studio audio the model is used to) and copied so the model gets
+  // a plain standalone array.
+  const out = await asr(normalizeGain(seg.slice()));
+  return (out && out.text) || "";
+}
+
+// Turn any not-yet-converted captured audio into the session's 16kHz buffer,
+// then transcribe only what hasn't been transcribed for good yet: segments
+// already finished come from the cache, so each refresh costs only the newest
+// few seconds however long the recitation has run (it used to redo the WHOLE
+// recording every time — on a phone, a page-long recitation soon took longer
+// than the gap between updates).
+async function sessionTranscribe(sess, isFinal) {
+  const raw = sess.raw.splice(0);
+  sess.rawSamples = 0;
+  if (raw.length) {
+    const r = await resampleTo16k(mergeAudioChunks(raw), sess.sampleRate);
+    if (sess.cancelled) return null;
+    sessionAppendPcm(sess, r);
+  }
+  const view = sess.pcm.subarray(0, sess.len);
+  const plan = planAsrSegments(view, 16000, ASR_SEGMENT_SECONDS, sess.doneEnd, isFinal);
+  let tail = "";
+  for (const seg of plan) {
+    const text = await transcribeSegment(view.subarray(seg.start, seg.end));
+    if (sess.cancelled) return null;
+    if (seg.final) { sess.doneTexts.push(text); sess.doneEnd = seg.end; } else { tail = text; }
+  }
+  return tokenizeArabic([...sess.doneTexts, tail].join(" "));
+}
+
+async function sessionCheck(sess, isFinal) {
+  const said = await sessionRun(sess, () => sessionTranscribe(sess, isFinal));
+  if (!said || sess.cancelled) return null;
+  return alignRecitation(sess.refWords, said);
+}
+
+// While reciting, refresh the highlighting every few seconds — the closest a
+// non-streaming model gets to "live". A refresh already queued/running just
+// causes the next tick to skip, so slow devices fall behind gracefully
+// instead of piling work up.
+function startPeriodicChecks(sess) {
   clearInterval(checkPeriodicTimer);
   checkPeriodicTimer = setInterval(async () => {
-    if (checkPeriodicBusy || !checkRec.active) return;
-    const merged = mergeAudioChunks(checkRec.chunks);
-    if (merged.length < checkRec.sampleRate * 2) return; // wait for ~2s of audio first
-    checkPeriodicBusy = true;
+    if (sess.cancelled || !checkRec.active || checkRec.session !== sess || sess.tickQueued) return;
+    if (sessionSeconds(sess) < 2) return; // wait for ~2s of audio first
+    sess.tickQueued = true;
     try {
-      const alignment = await checkAudioAgainstPage(merged, checkRec.sampleRate);
-      if (!checkRec.active) return; // stopped while this tick was running
-      renderCheckResultWords(alignment);
-      const pct = Math.round(alignment.accuracy * 100);
-      dom.checkStatus.textContent = `Listening… ${alignment.correct}/${alignment.total} so far (${pct}%)`;
-    } catch { /* transient — the next tick will just try again */ }
-    finally { checkPeriodicBusy = false; }
+      const a = await sessionCheck(sess, false);
+      if (!a || sess.cancelled || !checkRec.active) return;
+      renderCheckResultWords(a);
+      if (checkRec.heardSound) {
+        dom.checkStatus.textContent = a.reached
+          ? `Listening… ${a.correct}/${a.reached} right so far`
+          : "Listening…";
+      }
+    } catch { /* transient — the next tick just tries again */ }
+    finally { sess.tickQueued = false; }
   }, CHECK_PERIODIC_MS);
 }
 
+function checkSummaryText(a) {
+  if (!a.reached) return "Couldn't match any words — try again a little louder or closer to the mic.";
+  const pct = Math.round(a.reachedAccuracy * 100);
+  let t = `${a.correct}/${a.reached} words right`;
+  if (a.close) t += `, ${a.close} close`;
+  t += ` (${pct}%) — ${recitationVerdict(a.reachedAccuracy)}`;
+  if (a.reached < a.total) t += ` Stopped ${a.total - a.reached} words before the end of the page.`;
+  return t;
+}
+
 async function runMemorizationCheck() {
-  const rec = stopCheckRecordingRaw();
+  const sess = checkRec.session;
+  stopCheckCapture();
   dom.checkRecordBtn.textContent = "🎙 Start Reciting";
   dom.checkRecordBtn.classList.remove("is-recording");
-  if (!rec || rec.pcm.length < 1600) { // less than 0.1s — nothing was captured
+  if (!sess || sess.cancelled || sessionSeconds(sess) < 0.1) { // nothing captured
     dom.checkStatus.textContent = "Didn't catch anything — try again.";
+    dom.checkRecordBtn.disabled = false;
+    setCheckPageNavDisabled(false);
     return;
   }
   dom.checkRecordBtn.disabled = true;
   dom.checkStatus.textContent = "Checking your recitation…";
   try {
-    const alignment = await checkAudioAgainstPage(rec.pcm, rec.sampleRate);
-    renderCheckResultWords(alignment);
+    const a = await sessionCheck(sess, true);
+    if (!a || sess.cancelled) return; // Restart was pressed meanwhile — drop this result
+    renderCheckResultWords(a);
     dom.checkResult.hidden = false;
-    const pct = Math.round(alignment.accuracy * 100);
-    dom.checkResult.textContent = `${alignment.correct}/${alignment.total} words (${pct}%) — ${recitationVerdict(alignment.accuracy)}`;
+    dom.checkResult.textContent = checkSummaryText(a);
     dom.checkStatus.textContent = "";
   } catch (err) {
-    dom.checkStatus.textContent = "Couldn't run the checker (offline and not yet downloaded?).";
+    if (!sess.cancelled) dom.checkStatus.textContent = "Couldn't run the checker (offline and not yet downloaded?).";
   } finally {
-    dom.checkRecordBtn.disabled = false;
+    if (!sess.cancelled) {
+      dom.checkRecordBtn.disabled = false;
+      setCheckPageNavDisabled(false);
+    }
   }
 }
 
@@ -2368,9 +2694,9 @@ function toggleCheckRecording() {
     dom.checkStatus.textContent = "Checking your recitation…";
     runMemorizationCheck();
   } else {
-    // A previous attempt's green/red word marks must not linger into a new
-    // one — without this, the first several seconds of a fresh recording
-    // still show last time's result, which reads as "restart doesn't work".
+    // A previous attempt's marks must not linger into a new one, and any
+    // still-running work from it must not paint over this one.
+    if (checkRec.session) checkRec.session.cancelled = true;
     clearCheckHighlighting();
     dom.checkResult.hidden = true;
     dom.checkRecordBtn.disabled = true;
@@ -2381,22 +2707,28 @@ function toggleCheckRecording() {
         dom.checkRecordBtn.classList.add("is-recording");
         dom.checkStatus.textContent = "Listening…";
         dom.checkResult.hidden = true;
-        startPeriodicChecks();
+        startPeriodicChecks(checkRec.session);
       }
     });
   }
 }
 
-// Explicit "start over" — stop/discard any recording in progress, clear
-// every trace of the last attempt, and land back on a clean page. Separate
-// from the Start/Stop toggle so it always works even if that got stuck.
+// Explicit "start over" — stop the mic, cancel anything still running from the
+// last attempt (so its result can't come back and repaint the page), clear
+// every trace of it, and land on a clean page. Separate from the Start/Stop
+// toggle so it always works even if that got stuck.
 function resetCheckState() {
-  stopCheckRecordingRaw();
+  if (checkRec.session) checkRec.session.cancelled = true;
+  checkRec.session = null;
+  checkRec.abortStart = checkRec.starting;
+  stopCheckCapture();
   dom.checkRecordBtn.textContent = "🎙 Start Reciting";
   dom.checkRecordBtn.classList.remove("is-recording");
   dom.checkRecordBtn.disabled = false;
   dom.checkResult.hidden = true;
+  dom.checkResult.textContent = "";
   dom.checkStatus.textContent = "";
+  setCheckPageNavDisabled(false);
   clearCheckHighlighting();
 }
 

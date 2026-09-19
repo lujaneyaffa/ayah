@@ -1,7 +1,7 @@
 /* Ayah service worker — network-first for the shell (so updates flow),
    network-first for Quran.com data + word timings, cache-first for recitation
    audio (offline playback of ayahs you've played), cache fallback everywhere */
-const VERSION = "v38";
+const VERSION = "v40";
 const SHELL_CACHE = `ayah-shell-${VERSION}`;
 const API_CACHE = `ayah-api-${VERSION}`;
 const AUDIO_CACHE = `ayah-audio-${VERSION}`;
@@ -55,6 +55,52 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+const audioFills = new Map(); // file url -> in-flight fill, so parallel Range requests share ONE download
+
+function fillAudioCache(fileUrl) {
+  if (audioFills.has(fileUrl)) return audioFills.get(fileUrl);
+  const job = (async () => {
+    const cache = await caches.open(AUDIO_CACHE);
+    if (await cache.match(fileUrl)) return;
+    // Let the streaming response the player is waiting on get the bandwidth first.
+    await new Promise((r) => setTimeout(r, 1500));
+    const res = await fetch(fileUrl);
+    if (!res || !res.ok || res.status !== 200) return;
+    await cache.put(fileUrl, res);
+    const keys = await cache.keys();
+    if (keys.length > AUDIO_MAX_ENTRIES) {
+      for (const k of keys.slice(0, keys.length - AUDIO_MAX_ENTRIES)) await cache.delete(k);
+    }
+  })().catch(() => {}).finally(() => audioFills.delete(fileUrl));
+  audioFills.set(fileUrl, job);
+  return job;
+}
+
+async function serveAudioFromCache(full, req) {
+  const range = req.headers.get("range");
+  if (!range) return full;
+  const m = /bytes=(\d*)-(\d*)/.exec(range);
+  if (!m || (!m[1] && !m[2])) return full;
+  const buf = await full.arrayBuffer();
+  const total = buf.byteLength;
+  let start = m[1] ? parseInt(m[1], 10) : total - parseInt(m[2], 10);
+  let end = m[1] && m[2] ? parseInt(m[2], 10) : total - 1;
+  if (!isFinite(start) || start < 0) start = 0;
+  if (!isFinite(end) || end >= total) end = total - 1;
+  if (start > end || start >= total) {
+    return new Response(null, {
+      status: 416,
+      statusText: "Range Not Satisfiable",
+      headers: { "Content-Range": `bytes */${total}` }
+    });
+  }
+  const headers = new Headers(full.headers);
+  headers.set("Content-Range", `bytes ${start}-${end}/${total}`);
+  headers.set("Content-Length", String(end - start + 1));
+  headers.set("Accept-Ranges", "bytes");
+  return new Response(buf.slice(start, end + 1), { status: 206, statusText: "Partial Content", headers });
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
@@ -77,65 +123,24 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Recitation audio: cache-first so played ayahs replay offline. Entries are
-  // stored as FULL bodies under a Range-less request key; Range requests
-  // (which <audio> sends for every chunk of a long recitation, not just on
-  // seek) are sliced from that cached body BY HAND below, because relying on
-  // the Cache API's own automatic Range support is inconsistent across
-  // engines — a plain 200 handed back for a mid-file Range request confuses
-  // the media pipeline and was cutting long ayahs off partway through.
+  // Recitation audio. Cache HIT: served from the stored full body, with
+  // Range requests sliced by hand into proper 206s (the Cache API's own Range
+  // support is inconsistent across engines, and a plain 200 handed back for a
+  // mid-file Range request cuts long ayahs off). Cache MISS: pass straight
+  // through to the network exactly as if there were no service worker, so
+  // playback starts immediately with the CDN's real 206s, and fill the cache
+  // once in the background for offline replay. (It used to download the WHOLE
+  // file before answering the first request — and every parallel Range request
+  // the browser fires started its own full download — so on a slow connection
+  // playback stalled or gave up part-way, which sounds like a random cut-off.)
   if (req.method === "GET" && AUDIO_HOSTS.has(url.hostname)) {
-    event.respondWith(
-      caches.open(AUDIO_CACHE).then(async (cache) => {
-        const plainReq = new Request(req.url); // Range-less: stable cache key
-        let full = await cache.match(plainReq);
-        if (!full) {
-          // Not cached: fetch the complete file (no Range header) so it can
-          // be stored and replayed offline later, regardless of what range
-          // this particular request asked for.
-          full = await fetch(plainReq);
-          if (full && full.ok && full.status === 200) {
-            await cache.put(plainReq, full.clone()).catch(() => {});
-            const keys = await cache.keys();
-            if (keys.length > AUDIO_MAX_ENTRIES) {
-              for (const k of keys.slice(0, keys.length - AUDIO_MAX_ENTRIES)) {
-                await cache.delete(k);
-              }
-            }
-          }
-        }
-        if (!full || !full.ok) return full;
-
-        const range = req.headers.get("range");
-        if (!range) return full.clone();
-        const m = /bytes=(\d*)-(\d*)/.exec(range);
-        if (!m || (!m[1] && !m[2])) return full.clone();
-
-        const buf = await full.clone().arrayBuffer();
-        const total = buf.byteLength;
-        let start = m[1] ? parseInt(m[1], 10) : total - parseInt(m[2], 10);
-        let end = m[1] && m[2] ? parseInt(m[2], 10) : total - 1;
-        if (!isFinite(start) || start < 0) start = 0;
-        if (!isFinite(end) || end >= total) end = total - 1;
-        if (start > end || start >= total) {
-          return new Response(null, {
-            status: 416,
-            statusText: "Range Not Satisfiable",
-            headers: { "Content-Range": `bytes */${total}` }
-          });
-        }
-
-        const headers = new Headers(full.headers);
-        headers.set("Content-Range", `bytes ${start}-${end}/${total}`);
-        headers.set("Content-Length", String(end - start + 1));
-        headers.set("Accept-Ranges", "bytes");
-        return new Response(buf.slice(start, end + 1), {
-          status: 206,
-          statusText: "Partial Content",
-          headers
-        });
-      })
-    );
+    event.respondWith((async () => {
+      const cache = await caches.open(AUDIO_CACHE);
+      const full = await cache.match(req.url);
+      if (full) return serveAudioFromCache(full, req);
+      try { event.waitUntil(fillAudioCache(req.url)); } catch { fillAudioCache(req.url); }
+      return fetch(req);
+    })());
     return;
   }
 

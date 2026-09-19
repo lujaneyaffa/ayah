@@ -370,5 +370,102 @@ console.log("\n--- Integration: verse loading pipeline ---");
     return Math.abs(out[0] / out[2] - pcm[0] / pcm[2]) < 1e-6;
   })());
 
+  // --- Checker v39: tolerant matching, reached, incremental segments, speech gate ---
+  const sim = vm.runInContext("wordSimilarity", sandbox);
+  const planSegs = vm.runInContext("planAsrSegments", sandbox);
+  const looksSpeech = vm.runInContext("segmentLooksLikeSpeech", sandbox);
+  const nw = normWord;
+
+  check("wordSimilarity: identical = 1, unrelated = low",
+    sim("الرحمن", "الرحمن") === 1 && sim("الرحمن", "كتاب") < 0.5);
+  check("wordSimilarity: short words never fuzzy-match",
+    sim("من", "مع") === 0 && sim("لا", "ما") === 0);
+  check("alignRecitation: a one-letter slip is 'close', not flat wrong", (() => {
+    const r = align([nw("الرَّحْمَٰنِ")], [nw("الرحمان")]);
+    return r.perWord[0] === "close" && r.close === 1 && r.correct === 0 && r.reached === 1;
+  })());
+  check("alignRecitation: a compound the model splits in two still matches (يَا أَيُّهَا)", (() => {
+    const r = align([nw("يَٰٓأَيُّهَا"), nw("ٱلَّذِينَ")], [nw("يَا"), nw("أَيُّهَا"), nw("الَّذِينَ")]);
+    return r.perWord[0] !== "missed" && r.perWord[1] === "said" && r.extraWords === 0;
+  })());
+  check("alignRecitation: two reference words spoken as one heard word both match", (() => {
+    const r = align(["لا", "اله"], ["لااله"]);
+    return r.perWord[0] === "said" && r.perWord[1] === "said";
+  })());
+  check("alignRecitation: words after where the reciter stopped are 'not reached', not mistakes", (() => {
+    const r = align(["ا", "ب", "ج", "د"], ["ا", "ب"]);
+    return r.reached === 2 && r.accuracy === 0.5 && r.reachedAccuracy === 1;
+  })());
+  check("alignRecitation: a skipped word in the MIDDLE is a miss inside the reached span", (() => {
+    const r = align(["ا", "ب", "ج", "د"], ["ا", "ج", "د"]);
+    return r.reached === 4 && r.perWord[1] === "missed" && r.correct === 3;
+  })());
+  check("alignRecitation: when a phrase repeats, the EARLIEST alignment wins (a reciter starts at the top)", (() => {
+    const r = align(["ا", "ب", "ج", "ا", "ب"], ["ا", "ب"]);
+    return r.perWord.join() === "said,said,missed,missed,missed" && r.reached === 2;
+  })());
+  check("alignRecitation: only the tail of a repeated phrase heard still lands on the first occurrence", (() => {
+    const r = align(["س", "ا", "ب", "ج", "ا", "ب"], ["ا", "ب"]);
+    return r.perWord[1] === "said" && r.perWord[2] === "said" && r.perWord[4] === "missed";
+  })());
+  check("alignRecitation: nothing heard means nothing reached",
+    align(["ا", "ب"], []).reached === 0);
+  check("alignRecitation: a full-page-sized alignment finishes quickly", (() => {
+    const ref = [], said = [];
+    for (let i = 0; i < 250; i++) { ref.push("كلمه" + (i % 37)); said.push("كلمه" + (i % 37)); }
+    const t0 = Date.now();
+    const r = align(ref, said);
+    return r.correct === 250 && Date.now() - t0 < 1500;
+  })());
+
+  const mkAudio = (sec) => new Float32Array(sr * sec);
+  check("planAsrSegments: while still recording, earlier segments are final and the last is provisional", (() => {
+    const segs = planSegs(mkAudio(30), sr, 7, 0, false);
+    return segs.length >= 3 && segs.slice(0, -1).every((x) => x.final) && segs[segs.length - 1].final === false;
+  })());
+  check("planAsrSegments: once recording has ended, everything is final", (() => {
+    const segs = planSegs(mkAudio(30), sr, 7, 0, true);
+    return segs.every((x) => x.final);
+  })());
+  check("planAsrSegments: segments are contiguous and cover the audio through the end when finished", (() => {
+    const segs = planSegs(mkAudio(30), sr, 7, 0, true);
+    let ok = segs[0].start === 0 && segs[segs.length - 1].end === sr * 30;
+    for (let i = 1; i < segs.length; i++) if (segs[i].start !== segs[i - 1].end) ok = false;
+    return ok;
+  })());
+  check("planAsrSegments: resuming from a finished boundary yields the same later cuts", (() => {
+    const pcm = mkAudio(40);
+    for (let i = 0; i < pcm.length; i++) pcm[i] = Math.sin(i / 7) * (i % (sr * 3) < sr ? 0.01 : 0.5);
+    const early = planSegs(pcm.subarray(0, sr * 25), sr, 7, 0, false);
+    const firstFinal = early.filter((x) => x.final);
+    const late = planSegs(pcm, sr, 7, 0, true);
+    return firstFinal.length > 0 && firstFinal.every((x, i) => late[i].start === x.start && late[i].end === x.end);
+  })());
+
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 - 0.5; };
+  check("segmentLooksLikeSpeech: steady noise is not speech", (() => {
+    const n = mkAudio(6); for (let i = 0; i < n.length; i++) n[i] = rnd() * 0.3;
+    return looksSpeech(n) === false;
+  })());
+  check("segmentLooksLikeSpeech: digital silence is not speech", looksSpeech(mkAudio(6)) === false);
+  check("segmentLooksLikeSpeech: bursts of voice-like sound with pauses between IS speech", (() => {
+    const n = mkAudio(6);
+    for (let i = 0; i < n.length; i++) {
+      const burst = Math.floor(i / (sr * 0.4)) % 2 === 0;
+      n[i] = burst ? Math.sin(i * 0.07) * 0.3 + rnd() * 0.05 : rnd() * 0.004;
+    }
+    return looksSpeech(n) === true;
+  })());
+  check("segmentLooksLikeSpeech: SUSTAINED voiced sound with only gentle swells (real recitation has few true gaps) is speech", (() => {
+    const n = mkAudio(6);
+    for (let i = 0; i < n.length; i++) {
+      const swell = 0.35 + 0.65 * Math.abs(Math.sin(i / sr * Math.PI * 1.3)); // never drops to silence
+      n[i] = Math.sin(i * 0.05) * 0.2 * swell + rnd() * 0.003;
+    }
+    return looksSpeech(n) === true;
+  })());
+  check("segmentLooksLikeSpeech: too-short scraps are skipped", looksSpeech(new Float32Array(500).fill(0.3)) === false);
+
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();
