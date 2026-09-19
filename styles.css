@@ -219,10 +219,12 @@ main { display: block; }
 #checkArabic {
   font-size: clamp(19px, 5.1vw, 26px);
   line-height: 2.15;
-  text-align: justify;
-  text-align-last: center;
   margin: 6px 0 0;
 }
+/* One row per ayah, natural word spacing, lines starting from the right (RTL
+   start). Justifying stretched the gaps on wrapped lines (and the highlight
+   with them) — natural spacing reads cleaner at phone width. */
+.ayah-row { text-align: start; }
 .ayah-group {
   padding: 0.12em 0.2em;
   border-radius: 0.5em;

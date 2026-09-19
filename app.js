@@ -144,7 +144,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v41"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v42"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -2315,12 +2315,15 @@ async function renderCheckPage(pageNumber) {
     dom.checkSurah.textContent = firstSurah === lastSurah ? firstSurah : `${firstSurah} – ${lastSurah}`;
     const allWords = [];
     const TINT_COUNT = 6;
-    // One continuous page, like a printed Mushaf: the text just flows, and
-    // each ayah is only a soft inline highlight so you can still tell where
-    // one ends and the next begins. The last word of an ayah and its number
-    // are locked together (nowrap) so the number can never end up alone at
-    // the start of a line.
+    // One continuous page, like a printed Mushaf: small type, no boxes or
+    // gaps between ayahs, each ayah only a soft inline highlight. Every ayah
+    // BEGINS on a new line (a long one still wraps naturally across lines
+    // inside its own row). The last word of an ayah and its number are
+    // locked together (nowrap) so the number can never end up alone at the
+    // start of a line.
     data.verses.forEach((v, ayahIdx) => {
+      const row = document.createElement("div");
+      row.className = "ayah-row";
       const group = document.createElement("span");
       group.className = `ayah-group ayah-tint-${ayahIdx % TINT_COUNT}`;
       const badge = document.createElement("span");
@@ -2343,8 +2346,8 @@ async function renderCheckPage(pageNumber) {
         }
       });
       if (!v.words.length) group.appendChild(badge);
-      dom.checkArabic.appendChild(group);
-      dom.checkArabic.appendChild(document.createTextNode(" "));
+      row.appendChild(group);
+      dom.checkArabic.appendChild(row);
     });
     state.checkRefWords = allWords;
     dom.checkStatus.textContent = "";

@@ -35,13 +35,14 @@ no subscriptions, no v0 credits.
 - **Memorization check** — recite a whole Mushaf page out loud and watch it
   follow along: words turn green as you get them right, amber when they were
   close, red when missed, and words you haven't reached yet stay neutral. The
-  page reads as one continuous Mushaf-style block (each ayah softly highlighted,
-  its number never stranded on its own line), the Start/Restart controls stay
-  pinned at the top, and it updates every few seconds while you recite. A level meter shows the mic is hearing you, and Restart wipes the
-  attempt (including any check still running). Powered by Tarteel's own
-  Quran-tuned Whisper model running **entirely on your device** (no audio ever
-  leaves it). First check downloads the checker (~130MB, once); after that it
-  works offline like everything else.
+  page reads as one continuous Mushaf-style block: small type, each ayah softly
+  highlighted and starting on a new line, and its number never stranded on a
+  line of its own. Start/Restart stay pinned at the top, the page updates every
+  few seconds while you recite, a level meter shows the mic is hearing you, and
+  Restart wipes the attempt (including any check still running). Powered by
+  Tarteel's own Quran-tuned Whisper model running **entirely on your device**
+  (no audio ever leaves it). First check downloads the checker (~130MB, once);
+  after that it works offline like everything else.
 - **Offline** — service worker caches the shell + viewed verses and audio links;
   curated verses work with no internet; tafsir caches recently viewed verses
 - **Installable PWA** + light/dark themes
