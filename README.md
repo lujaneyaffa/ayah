@@ -31,13 +31,13 @@ no subscriptions, no v0 credits.
 - **Audio** — play recitation of the current ayah (like Quran.com) with 12
   reciters to choose from (Alafasy, Sudais, Al-Husary, al-Minshawi, and more)
   and **playback speed** (0.5×–2×); your choices are remembered
-- **Browse** — all 114 surahs, expandable to per-ayah chips
 - **Memorized** — mark verses (saved on-device), live count
 - **Memorization check** — recite a whole Mushaf page out loud and watch it
   follow along: words turn green as you get them right, amber when they were
-  close, red when missed, and words you haven't reached yet stay neutral. Each
-  ayah is its own tinted row, and the page updates every few seconds while you
-  recite. A level meter shows the mic is hearing you, and Restart wipes the
+  close, red when missed, and words you haven't reached yet stay neutral. The
+  page reads as one continuous Mushaf-style block (each ayah softly highlighted,
+  its number never stranded on its own line), the Start/Restart controls stay
+  pinned at the top, and it updates every few seconds while you recite. A level meter shows the mic is hearing you, and Restart wipes the
   attempt (including any check still running). Powered by Tarteel's own
   Quran-tuned Whisper model running **entirely on your device** (no audio ever
   leaves it). First check downloads the checker (~130MB, once); after that it

@@ -144,7 +144,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v40"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v41"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -227,8 +227,6 @@ const state = {
   memorized: new Set(loadJSON(LS_MEMORIZED, [])),
   installed: false,
   deferredPrompt: null,
-  chapterExpanded: null,
-  chapterCache: {},
   reciterId: Number(loadJSON(LS_RECITER, 7)),
   audioCache: loadJSON(LS_AUDIOCACHE, {}),
   wordTimingCache: loadJSON(LS_WORDTIMING, {}),
@@ -263,8 +261,6 @@ const dom = {
   memHeadline: $("#memHeadline"),
   memSub: $("#memSub"),
   memList: $("#memList"),
-  surahList: $("#surahList"),
-  surahSearch: $("#surahSearch"),
   readCard: $("#readCard"),
   readSurah: $("#readSurah"),
   readKey: $("#readKey"),
@@ -947,122 +943,6 @@ function toggleMemorize() {
   renderMemorized();
 }
 /* ================================================================
-   Browse view
-   ================================================================ */
-let browseToken = 0;
-
-function renderBrowse(filter) {
-  const query = (filter || "").trim().toLowerCase();
-  const list = dom.surahList;
-  list.innerHTML = "";
-
-  const surahs = SURAHS.filter((s) => {
-    if (!query) return true;
-    return (
-      s.name.toLowerCase().includes(query) ||
-      s.arabic.includes(query) ||
-      String(s.id) === query
-    );
-  });
-
-  if (!surahs.length) {
-    const li = document.createElement("li");
-    li.className = "empty-state";
-    li.textContent = "No surah found.";
-    list.appendChild(li);
-    return;
-  }
-
-  for (const s of surahs) {
-    const li = document.createElement("li");
-    li.className = "surah-item";
-    li.setAttribute("role", "button");
-    li.setAttribute("tabindex", "0");
-    li.innerHTML = `
-      <span class="surah-num">${s.id}</span>
-      <span class="surah-en">${s.name}</span>
-      <span class="surah-ar">${s.arabic}</span>
-      <span class="surah-count">${s.ayahCount} ayahs</span>
-    `;
-
-    const open = () => toggleChapter(s, li);
-    li.addEventListener("click", open);
-    li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
-
-    // Expandable ayah picker
-    const picker = document.createElement("div");
-    picker.className = "ayah-picker";
-    picker.style.display = "none";
-    li.appendChild(picker);
-    list.appendChild(li);
-  }
-}
-
-async function toggleChapter(surah, li) {
-  const picker = li.querySelector(".ayah-picker");
-  const isOpen = picker.style.display !== "none";
-  picker.style.display = "none";
-  if (isOpen) {
-    li.classList.remove("surah-open");
-    return;
-  }
-
-  li.classList.add("surah-open");
-  if (picker.dataset.loaded === "1") {
-    picker.style.display = "flex";
-    return;
-  }
-
-  picker.innerHTML = '<span class="surah-count">Loading ayahs…</span>';
-  picker.style.display = "flex";
-  picker.dataset.loaded = "1";
-
-  const token = ++browseToken;
-  try {
-    const keys = await getChapterKeys(surah.id);
-    if (token !== browseToken) return;
-    picker.innerHTML = "";
-    for (const key of keys) {
-      const chip = document.createElement("button");
-      chip.className = "ayah-chip" + (state.memorized.has(key) ? " is-mem" : "");
-      chip.textContent = String(parseKey(key).ayah);
-      chip.title = `Go to ${surah.name} ${key.split(":")[1]}`;
-      chip.addEventListener("click", (e) => {
-        e.stopPropagation();
-        navPending = true;
-        state.currentKey = key;
-        setView("read");
-      });
-      picker.appendChild(chip);
-    }
-  } catch {
-    if (token !== browseToken) return;
-    picker.innerHTML = '<span class="error-note">Couldn’t load ayahs offline.</span>';
-  }
-}
-
-async function getChapterKeys(chapterId) {
-  if (state.chapterCache[chapterId]) return state.chapterCache[chapterId];
-  const s = surahById(chapterId);
-  const keys = [];
-  let page = 1;
-  const per = 100;
-  while (keys.length < s.ayahCount) {
-    const url = `${API_BASE}/verses/by_chapter/${chapterId}?per_page=${per}&page=${page}`;
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error("API error " + res.status);
-    const json = await res.json();
-    const verses = json.verses || [];
-    if (!verses.length) break;
-    for (const v of verses) keys.push(v.verse_key);
-    if (keys.length >= s.ayahCount) break;
-    page++;
-  }
-  state.chapterCache[chapterId] = keys;
-  return keys;
-}
-
-/* ================================================================
    Memorized view
    ================================================================ */
 function renderMemorized() {
@@ -1136,7 +1016,6 @@ function setView(name) {
   dom.views.forEach((v) => v.classList.toggle("is-active", v.dataset.view === name));
 
   if (name === "read") renderRead();
-  if (name === "browse") renderBrowse(dom.surahSearch.value);
   if (name === "memorized") renderMemorized();
 }
 
@@ -1180,9 +1059,6 @@ function wireEvents() {
     if (e.key === "ArrowLeft") { e.preventDefault(); goPrev(); }
     if (e.key === "ArrowRight") { e.preventDefault(); goNext(); }
   });
-
-  // Browse search
-  dom.surahSearch.addEventListener("input", (e) => renderBrowse(e.target.value));
 
   // Surah / ayah selector on Read
   dom.readSurahSelect.addEventListener("change", () => {
@@ -2439,24 +2315,36 @@ async function renderCheckPage(pageNumber) {
     dom.checkSurah.textContent = firstSurah === lastSurah ? firstSurah : `${firstSurah} – ${lastSurah}`;
     const allWords = [];
     const TINT_COUNT = 6;
-    // One row per ayah (each its own tinted block) so where an ayah starts and
-    // ends is obvious at a glance across the whole page.
+    // One continuous page, like a printed Mushaf: the text just flows, and
+    // each ayah is only a soft inline highlight so you can still tell where
+    // one ends and the next begins. The last word of an ayah and its number
+    // are locked together (nowrap) so the number can never end up alone at
+    // the start of a line.
     data.verses.forEach((v, ayahIdx) => {
-      const group = document.createElement("div");
+      const group = document.createElement("span");
       group.className = `ayah-group ayah-tint-${ayahIdx % TINT_COUNT}`;
-      v.words.forEach((w) => {
-        const span = document.createElement("span");
-        span.className = "qword";
-        span.textContent = w.text;
-        group.appendChild(span);
-        group.appendChild(document.createTextNode(" "));
-        allWords.push(w.text);
-      });
       const badge = document.createElement("span");
       badge.className = "ayah-badge";
       badge.textContent = String(parseKey(v.key).ayah);
-      group.appendChild(badge);
+      v.words.forEach((w, wi) => {
+        const span = document.createElement("span");
+        span.className = "qword";
+        span.textContent = w.text;
+        allWords.push(w.text);
+        if (wi < v.words.length - 1) {
+          group.appendChild(span);
+          group.appendChild(document.createTextNode(" "));
+        } else {
+          const tail = document.createElement("span");
+          tail.className = "nowrap";
+          tail.appendChild(span);
+          tail.appendChild(badge);
+          group.appendChild(tail);
+        }
+      });
+      if (!v.words.length) group.appendChild(badge);
       dom.checkArabic.appendChild(group);
+      dom.checkArabic.appendChild(document.createTextNode(" "));
     });
     state.checkRefWords = allWords;
     dom.checkStatus.textContent = "";

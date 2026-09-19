@@ -214,14 +214,23 @@ main { display: block; }
 .qword-correct { color: var(--accent); }
 .qword-close { color: var(--star); text-decoration: underline dotted; text-underline-offset: 0.15em; }
 .qword-missed { color: var(--danger); text-decoration: underline wavy; text-underline-offset: 0.15em; }
-/* Check tab page view: each ayah gets its own tint so ayah boundaries are
-   obvious at a glance across a whole page, not just the small number badge. */
-.ayah-group {
-  display: block;
-  padding: 0.2em 0.7em;
-  margin: 0.35em 0;
-  border-radius: 0.7em;
+/* Check tab page view: one continuous, justified page of text (like a printed
+   Mushaf). Each ayah is just a soft inline highlight, not its own block. */
+#checkArabic {
+  font-size: clamp(19px, 5.1vw, 26px);
+  line-height: 2.15;
+  text-align: justify;
+  text-align-last: center;
+  margin: 6px 0 0;
 }
+.ayah-group {
+  padding: 0.12em 0.2em;
+  border-radius: 0.5em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.nowrap { white-space: nowrap; }
+#checkArabic .ayah-badge { margin-inline-start: 0.3em; }
 .ayah-tint-0 { background: var(--tint-0); }
 .ayah-tint-1 { background: var(--tint-1); }
 .ayah-tint-2 { background: var(--tint-2); }
@@ -237,6 +246,15 @@ main { display: block; }
   margin-bottom: 4px;
 }
 .check-page-nav input[type="number"] { text-align: center; }
+.check-dock {
+  position: sticky;
+  top: env(safe-area-inset-top);
+  z-index: 5;
+  background: var(--card);
+  padding: 8px 0 10px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
 .check-controls {
   display: flex;
   flex-wrap: wrap;
@@ -250,7 +268,8 @@ main { display: block; }
 .check-level-fill { width: 0; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.08s linear; }
 #checkRecordBtn.is-recording { background-color: var(--danger); color: #fff; border-color: var(--danger); }
 .check-result {
-  margin: 14px 0 0;
+  margin: 10px 0 0;
+  font-size: 14px;
   text-align: center;
   font-weight: 600;
 }
@@ -301,9 +320,10 @@ main { display: block; }
   justify-content: center;
   gap: 6px;
   font: inherit;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
-  padding: 11px 12px;
+  min-height: 54px; /* big enough to hit without looking — used one-handed / while busy */
+  padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: transparent;
@@ -352,26 +372,13 @@ main { display: block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-note { color: var(--danger); font-size: 13px; text-align: center; }
 
-/* ===== Browse ===== */
-.browse-head h2, .mem-head h2 {
+/* ===== Memorized / headings ===== */
+.mem-head h2 {
   margin: 0 0 12px;
   font-size: 18px;
   letter-spacing: -0.01em;
 }
-.search {
-  width: 100%;
-  font: inherit;
-  font-size: 15px;
-  padding: 11px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--ink);
-  margin-bottom: 12px;
-}
-.search:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.surah-list, .mem-list {
+.mem-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -379,56 +386,6 @@ main { display: block; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
-.surah-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 6px;
-  border-bottom: 1px solid var(--line);
-  cursor: pointer;
-  border-radius: 10px;
-}
-.surah-item:hover { background: var(--accent-soft); }
-.surah-num {
-  flex: 0 0 auto;
-  width: 30px; height: 30px;
-  display: grid; place-items: center;
-  font-size: 12px; font-weight: 700;
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-radius: 9px;
-}
-.surah-en { flex: 1; font-weight: 600; font-size: 15px; }
-.surah-ar {
-  font-size: 18px;
-  font-family: "Noto Naskh Arabic", "Amiri", "Scheherazade New", serif;
-  color: var(--muted);
-}
-.surah-count { flex: 0 0 auto; font-size: 12px; color: var(--muted); }
-.surah-open {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.ayah-picker {
-  padding: 4px 6px 12px 44px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ayah-chip {
-  font: inherit;
-  font-size: 13px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-}
-.ayah-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
-.ayah-chip.is-mem { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ===== Diagnostics (triple-tap footer to toggle) ===== */
 .diag-log {
@@ -532,11 +489,7 @@ main { display: block; }
 /* ===== Narrow phones: never let the audio bar crowd or clip ===== */
 @media (max-width: 560px) {
   .audio-bar { gap: 8px; }
-  /* Keep play + 🔁 + repeat + speed on the top line (their natural DOM order),
-     then give the progress bar and reciter picker their own full-width rows. */
-  .audio-track { order: 5; flex-basis: 100%; }
-  .audio-bar .miniselect { max-width: none; }
-  .audio-bar #reciterSelect { order: 6; flex-basis: 100%; }
+
   .loop-row .miniselect { flex: 1 1 calc(50% - 4px); }
   .loop-row .miniselect-narrow { flex: 0 0 auto; }
   .read-selector { flex-wrap: wrap; }
@@ -689,15 +642,17 @@ main { display: block; }
   transition: width 0.2s linear;
 }
 .audio-bar .miniselect { flex: 0 1 auto; max-width: 170px; min-width: 0; }
-.miniselect-narrow { max-width: 64px !important; }
+.miniselect-narrow { max-width: 84px !important; }
+/* Selects beside Play/Pause: same big touch height as the buttons */
+.audio-bar .miniselect, .loop-row .miniselect { min-height: 54px; font-size: 17px; }
 .audio-toggle {
   flex: 0 0 auto;
-  width: 34px; height: 34px;
+  width: 56px; height: 56px;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: transparent;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 24px;
   display: grid; place-items: center;
   cursor: pointer;
 }
@@ -719,3 +674,15 @@ main { display: block; }
 .loop-row .miniselect { flex: 0 1 auto; max-width: none; min-width: 0; }
 .loop-arrow { flex: 0 0 auto; }
 .linkish:hover { color: var(--accent); background: var(--accent-soft); }
+
+/* ===== Phones: audio bar layout =====
+   Kept at the END of the file on purpose — these override the base
+   .audio-track / .audio-bar .miniselect rules above, which come later than the
+   other narrow-screen block and would otherwise win. Row 1: Play, progress
+   bar, 🔁, 🔂. Row 2: repeat + speed, half width each. Row 3: reciter. */
+@media (max-width: 560px) {
+  .audio-track { flex: 1 1 40px; min-width: 40px; }
+  .audio-bar .miniselect { max-width: none; }
+  .audio-bar .miniselect-narrow { flex: 1 1 calc(50% - 6px); max-width: none !important; }
+  .audio-bar #reciterSelect { order: 6; flex: 1 1 100%; }
+}
