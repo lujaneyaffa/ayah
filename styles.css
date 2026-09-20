@@ -217,7 +217,7 @@ main { display: block; }
 /* Check tab page view: one continuous, justified page of text (like a printed
    Mushaf). Each ayah is just a soft inline highlight, not its own block. */
 #checkArabic {
-  font-size: clamp(19px, 5.1vw, 26px);
+  font-size: clamp(16.5px, 4.5vw, 24px);
   line-height: 2.15;
   margin: 6px 0 0;
 }

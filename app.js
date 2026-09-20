@@ -144,7 +144,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v44"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v45"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -2362,9 +2362,9 @@ async function renderCheckPage(pageNumber) {
     // One continuous page, like a printed Mushaf: small type, no boxes or
     // gaps between ayahs, each ayah only a soft inline highlight. Every ayah
     // BEGINS on a new line (a long one still wraps naturally across lines
-    // inside its own row). The last word of an ayah and its number are
-    // locked together (nowrap) so the number can never end up alone at the
-    // start of a line.
+    // inside its own row). The END of each ayah is locked together with its
+    // number (nowrap) so neither the number nor a single last word can end up
+    // alone on a row.
     data.verses.forEach((v, ayahIdx) => {
       const row = document.createElement("div");
       row.className = "ayah-row";
@@ -2373,23 +2373,32 @@ async function renderCheckPage(pageNumber) {
       const badge = document.createElement("span");
       badge.className = "ayah-badge";
       badge.textContent = String(parseKey(v.key).ayah);
+      // Keep the END of the ayah together with its number: at least the last
+      // two words (three when they're short), so an ayah never ends with one
+      // lonely word on a row of its own — 34% of multi-line ayahs did before.
+      const n = v.words.length;
+      const letters = (i) => normalizeArabicWord(v.words[i].text).length;
+      let keep = n >= 2 ? 2 : 1;
+      if (n >= 2 && letters(n - 1) + letters(n - 2) > 24) keep = 1;      // two very long words: don't force them onto one line
+      else if (n >= 3 && letters(n - 1) + letters(n - 2) + letters(n - 3) <= 13) keep = 3;
+      const tailStart = n - keep;
+      let tail = null;
       v.words.forEach((w, wi) => {
         const span = document.createElement("span");
         span.className = "qword";
         span.textContent = w.text;
         allWords.push(w.text);
         ayahOf.push(parseKey(v.key).ayah);
-        if (wi < v.words.length - 1) {
+        if (wi < tailStart) {
           group.appendChild(span);
           group.appendChild(document.createTextNode(" "));
         } else {
-          const tail = document.createElement("span");
-          tail.className = "nowrap";
+          if (!tail) { tail = document.createElement("span"); tail.className = "nowrap"; group.appendChild(tail); }
+          if (wi > tailStart) tail.appendChild(document.createTextNode(" "));
           tail.appendChild(span);
-          tail.appendChild(badge);
-          group.appendChild(tail);
         }
       });
+      if (tail) tail.appendChild(badge);
       if (!v.words.length) group.appendChild(badge);
       row.appendChild(group);
       dom.checkArabic.appendChild(row);
