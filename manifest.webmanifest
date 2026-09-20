@@ -1,13 +1,13 @@
 {
   "name": "Ayah — Quran Verse Widget",
   "short_name": "Ayah",
-  "description": "A calm widget that shows one ayah at a time, with translation and links to tafsir. Move through the Qur'an verse by verse, browse surahs, and track what you've memorized.",
+  "description": "A calm widget that shows one ayah at a time, with translation and links to tafsir. Move through the Qur'an verse by verse and track what you've memorized.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0f1a16",
-  "theme_color": "#0f1a16",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "categories": ["books", "education", "lifestyle"],
   "icons": [
     {

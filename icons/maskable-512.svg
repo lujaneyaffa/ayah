@@ -1,14 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#144a34"/>
-      <stop offset="1" stop-color="#0a1f17"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" fill="url(#bg)"/>
-  <g transform="translate(64 64) scale(0.75)">
-    <circle cx="206" cy="250" r="104" fill="#f2e5c9"/>
-    <circle cx="244" cy="250" r="104" fill="#0a1f17"/>
-    <path d="M396 86 l8 24 24 8 -24 8 -8 24 -8 -24 -24 -8 24 -8 z" fill="#e8c37b"/>
+  <rect width="512" height="512" fill="#000"/>
+  <g transform="translate(256 256) scale(0.95) translate(-256 -307)" fill="none" stroke="#fff" stroke-width="13" stroke-linejoin="round" stroke-linecap="round">
+    <!-- roof, front face, side face -->
+    <polygon points="100,210 212,180 412,205 300,235"/>
+    <polygon points="100,210 300,235 300,435 100,405"/>
+    <polygon points="300,235 412,205 412,400 300,435"/>
+    <!-- kiswa band across both faces -->
+    <g fill="#fff" stroke="none">
+      <polygon points="100,250 300,275 300,303 100,278"/>
+      <polygon points="300,275 412,245 412,273 300,303"/>
+      <!-- door -->
+      <rect x="198" y="326" width="60" height="76" rx="6"/>
+    </g>
   </g>
+
 </svg>
