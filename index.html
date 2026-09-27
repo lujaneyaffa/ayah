@@ -153,7 +153,17 @@
             <h2 id="memHeadline">Memorized</h2>
             <p class="mem-sub" id="memSub">Mark verses to build your list.</p>
           </div>
+          <div class="mem-subtabs" role="tablist">
+            <button class="mem-subtab is-active" data-memview="list" role="tab" aria-selected="true">List</button>
+            <button class="mem-subtab" data-memview="pages" role="tab" aria-selected="false">Pages</button>
+          </div>
           <ul class="mem-list" id="memList"></ul>
+          <div class="mem-page-grid" id="memPageGrid" hidden></div>
+          <p class="mem-page-legend" id="memPageLegend" hidden>
+            <span class="pg-swatch pg-full"></span> fully memorized
+            <span class="pg-swatch pg-partial"></span> partly memorized
+            <span class="pg-swatch pg-empty"></span> not started
+          </p>
         </div>
       </section>
 

@@ -31,14 +31,17 @@ no subscriptions, no v0 credits.
 - **Audio** — play recitation of the current ayah (like Quran.com) with 12
   reciters to choose from (Alafasy, Sudais, Al-Husary, al-Minshawi, and more)
   and **playback speed** (0.5×–2×); your choices are remembered
-- **Memorized** — mark verses (saved on-device), live count
+- **Memorized** — mark verses (saved on-device), live count, plus a **Pages**
+  view: every one of the 604 Mushaf pages as a grid, glowing green once every
+  ayah on it is memorized (a soft green while it's partly done), tap any page
+  to jump straight into the checker there
 - **Memorization check** — recite a whole Mushaf page out loud and watch it
   follow along: words turn green as you get them right, amber when they were
   close, red when missed, and words you haven't reached yet stay neutral. The
-  page reads as one continuous Mushaf-style block (small type, each ayah softly
-  highlighted and starting on a new line, its number never stranded on a line of
-  its own). Start/Restart stay pinned at the top and it updates every few
-  seconds while you recite. When you tap **Stop & Check** you get an exact
+  page reads as one continuous Mushaf-style block (readable-sized type, each
+  ayah softly highlighted and starting on a new line, its number never
+  stranded on a line of its own). Start/Restart stay pinned at the top and it
+  updates every few seconds while you recite. When you tap **Stop & Check** you get an exact
   account of what went wrong, ayah by ayah — *not heard*, *said differently*
   (with what it heard instead) or *close* — and tapping a mistake jumps to that
   word in the page.

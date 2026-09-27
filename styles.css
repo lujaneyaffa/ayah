@@ -217,7 +217,7 @@ main { display: block; }
 /* Check tab page view: one continuous, justified page of text (like a printed
    Mushaf). Each ayah is just a soft inline highlight, not its own block. */
 #checkArabic {
-  font-size: clamp(16.5px, 4.5vw, 24px);
+  font-size: clamp(22px, 5.6vw, 32px);
   line-height: 2.15;
   margin: 6px 0 0;
 }
@@ -428,7 +428,7 @@ main { display: block; }
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
+  background: var(--card);
   color: var(--muted);
   max-height: 320px;
   overflow: auto;
@@ -438,7 +438,61 @@ main { display: block; }
 /* ===== Memorized ===== */
 .mem-head h2 { margin-bottom: 4px; }
 .mem-sub { margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+.mem-subtabs { display: flex; gap: 8px; margin-bottom: 14px; }
+.mem-subtab {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mem-subtab.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .mem-list { max-height: 70vh; }
+.mem-page-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 6px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 2px;
+}
+.pg-cell {
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pg-cell.pg-full { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pg-cell.pg-partial { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.mem-page-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 12px 2px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.pg-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  vertical-align: -2px;
+  margin-inline-end: 2px;
+}
+.pg-swatch.pg-full { background: var(--accent); border-color: var(--accent); }
+.pg-swatch.pg-partial { background: var(--accent-soft); border-color: var(--accent); }
+.pg-swatch.pg-empty { background: var(--card); }
 .mem-item {
   display: flex;
   align-items: center;
