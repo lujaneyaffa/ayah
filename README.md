@@ -32,9 +32,9 @@ no subscriptions, no v0 credits.
   reciters to choose from (Alafasy, Sudais, Al-Husary, al-Minshawi, and more)
   and **playback speed** (0.5×–2×); your choices are remembered
 - **Memorized** — mark verses (saved on-device), live count, plus a **Pages**
-  view: every one of the 604 Mushaf pages as a grid, glowing green once every
-  ayah on it is memorized (a soft green while it's partly done), tap any page
-  to jump straight into the checker there
+  view: browse the actual Qur'an page by page (all 604), with every ayah
+  you've memorized glowing green right on the page — tap any ayah to mark or
+  unmark it from there
 - **Memorization check** — recite a whole Mushaf page out loud and watch it
   follow along: words turn green as you get them right, amber when they were
   close, red when missed, and words you haven't reached yet stay neutral. The

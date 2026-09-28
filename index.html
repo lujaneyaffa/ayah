@@ -158,12 +158,28 @@
             <button class="mem-subtab" data-memview="pages" role="tab" aria-selected="false">Pages</button>
           </div>
           <ul class="mem-list" id="memList"></ul>
-          <div class="mem-page-grid" id="memPageGrid" hidden></div>
-          <p class="mem-page-legend" id="memPageLegend" hidden>
-            <span class="pg-swatch pg-full"></span> fully memorized
-            <span class="pg-swatch pg-partial"></span> partly memorized
-            <span class="pg-swatch pg-empty"></span> not started
-          </p>
+          <div class="mem-page-reader" id="memPageReader" hidden>
+            <div class="check-page-nav">
+              <button class="btn" id="memPagePrev" aria-label="Previous page">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+              </button>
+              <span>Page</span>
+              <input type="number" id="memPageInput" class="miniselect miniselect-narrow" min="1" max="604" aria-label="Mushaf page number" />
+              <span>/ 604</span>
+              <button class="btn" id="memPageNext" aria-label="Next page">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
+            </div>
+            <p class="mem-page-legend">
+              <span class="pg-swatch"></span> memorized — tap any ayah to toggle
+            </p>
+            <div class="read-head">
+              <span class="surah-name" id="memPageSurah"></span>
+              <span class="verse-key" id="memPageKey"></span>
+            </div>
+            <p class="check-status" id="memPageStatus"></p>
+            <div class="verse-arabic mushaf-page" id="memPageArabic" lang="ar" dir="rtl">…</div>
+          </div>
         </div>
       </section>
 
@@ -199,7 +215,7 @@
             <span class="surah-name" id="checkSurah"></span>
             <span class="verse-key" id="checkKey"></span>
           </div>
-          <div class="verse-arabic" id="checkArabic" lang="ar" dir="rtl">…</div>
+          <div class="verse-arabic mushaf-page" id="checkArabic" lang="ar" dir="rtl">…</div>
           <p class="check-credit">Recitation checker: <a href="https://huggingface.co/tarteel-ai/whisper-base-ar-quran" target="_blank" rel="noopener">Tarteel AI’s Quran speech model</a>, running entirely on your device.</p>
         </div>
       </section>

@@ -214,9 +214,10 @@ main { display: block; }
 .qword-correct { color: var(--accent); }
 .qword-close { color: var(--star); text-decoration: underline dotted; text-underline-offset: 0.15em; }
 .qword-missed { color: var(--danger); text-decoration: underline wavy; text-underline-offset: 0.15em; }
-/* Check tab page view: one continuous, justified page of text (like a printed
-   Mushaf). Each ayah is just a soft inline highlight, not its own block. */
-#checkArabic {
+/* Mushaf page view (Check tab and the Memorized > Pages reader): one
+   continuous block of text like a printed page. Each ayah is just a soft
+   inline highlight, not its own block. */
+.mushaf-page {
   font-size: clamp(22px, 5.6vw, 32px);
   line-height: 2.15;
   margin: 6px 0 0;
@@ -232,13 +233,17 @@ main { display: block; }
   box-decoration-break: clone;
 }
 .nowrap { white-space: nowrap; }
-#checkArabic .ayah-badge { margin-inline-start: 0.3em; }
+.mushaf-page .ayah-badge { margin-inline-start: 0.3em; }
 .ayah-tint-0 { background: var(--tint-0); }
 .ayah-tint-1 { background: var(--tint-1); }
 .ayah-tint-2 { background: var(--tint-2); }
 .ayah-tint-3 { background: var(--tint-3); }
 .ayah-tint-4 { background: var(--tint-4); }
 .ayah-tint-5 { background: var(--tint-5); }
+/* Memorized > Pages reader: memorized ayahs glow green, others stay plain —
+   tapping an ayah toggles it right there. */
+.ayah-mem { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); cursor: pointer; }
+.ayah-neutral { background: transparent; cursor: pointer; }
 .check-page-nav {
   display: flex;
   align-items: center;
@@ -452,32 +457,12 @@ main { display: block; }
 }
 .mem-subtab.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .mem-list { max-height: 70vh; }
-.mem-page-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
-  gap: 6px;
-  max-height: 70vh;
-  overflow: auto;
-  padding: 2px;
-}
-.pg-cell {
-  min-height: 38px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--card);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.pg-cell.pg-full { background: var(--accent); border-color: var(--accent); color: #fff; }
-.pg-cell.pg-partial { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.mem-page-reader .check-page-nav { margin-bottom: 10px; }
 .mem-page-legend {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  margin: 12px 2px 0;
+  gap: 6px;
+  margin: 0 2px 10px;
   font-size: 12px;
   color: var(--muted);
 }
@@ -486,13 +471,11 @@ main { display: block; }
   width: 14px;
   height: 14px;
   border-radius: 4px;
-  border: 1px solid var(--line);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
   vertical-align: -2px;
   margin-inline-end: 2px;
 }
-.pg-swatch.pg-full { background: var(--accent); border-color: var(--accent); }
-.pg-swatch.pg-partial { background: var(--accent-soft); border-color: var(--accent); }
-.pg-swatch.pg-empty { background: var(--card); }
 .mem-item {
   display: flex;
   align-items: center;
