@@ -1,0 +1,12 @@
+# Accounts + sync backend for the Ayah app (a static site on GitHub Pages can't
+# keep accounts by itself). Deploy: npx wrangler deploy (from this folder).
+# Secret (never in this file): npx wrangler secret put PEPPER
+name = "ayah-accounts"
+main = "src/index.js"
+compatibility_date = "2026-08-21"
+preview_urls = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ayah-accounts"
+database_id = "2941a70d-1ff0-4577-8482-6488e39725d0"

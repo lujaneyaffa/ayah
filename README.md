@@ -116,29 +116,25 @@ macOS 15.6 supports Safari web widgets:
 ## Data & privacy
 Quran text from the public Quran.com API. Memorized list + last verse live
 only in your browser's `localStorage` — nothing leaves the device unless
-you turn on Sync (below).
+you log in to an account (below).
 
-## Device sync (iPhone ⇄ Mac)
-Your stars, last-read verse, reciter, repeat and display settings can sync
-between devices through **your own private GitHub repo** (`lujaneyaffa/ayah-sync`,
-created for this). One-time setup **on each device**:
+## Accounts & device sync
+Anyone can make a free account (username + a 6–12 digit PIN, no email) from
+**👤 Account** at the bottom of the app. Your memorized ayahs, reading place and
+settings then follow you to every device you log in on. Rules: stars merge as a
+**union** (never lost), settings are last-write-wins, and two devices writing at
+once are auto-merged (compare-and-swap on a version number).
 
-1. In the app, tap **⚙ Setup** (bottom of the page)
-2. Open the token link: github.com → Settings → Developer settings →
-   Fine-grained tokens → **Generate new token**
-   - Name: `ayah` · Expiration: 1 year
-   - Repository access: **Only select repositories** → `ayah-sync`
-   - Permissions → Contents → **Read and write**
-3. Paste the token into the app → **Save** (then tap **✔ Test** — a step-by-step
-   check of the token will explain exactly what's right or wrong, e.g.
-   read-only permissions, wrong repo selected, or an invalid token)
-
-If sync isn't working, tap **✔ Test** in ⚙ Setup — the app now reports the exact
-GitHub error (401 invalid, 403 read-only token, 404 token can't see the repo,
-or HTTP details) instead of a generic "offline", so the fix is clear right there.
-
-That's it — after that, syncing is automatic (on open, on return to the
-tab, every 90 s, and on every change, debounced 1.5 s). Rules: stars merge
-as a **union** (never lost), settings are last-write-wins, and conflicting
-writes are auto-merged via the repo's compare-and-swap. The token lives
-only in that device's browser storage and unlocks nothing but `ayah-sync`.
+- PINs are scrambled with a secret server-side key + PBKDF2 and can't be read
+  back — there's **no PIN reset**, and 5 wrong tries locks that username for
+  15 minutes. **Delete account** (in the same panel) removes your synced copy.
+- Switching to a different account on a device starts that device from a clean
+  slate, so people never inherit each other's stars.
+- The app is a static site, so accounts live on a tiny server of their own:
+  `accounts-api/` (a Cloudflare Worker + D1 database,
+  `ayah-accounts.lujane.workers.dev`). Deploy it from that folder with
+  `npx wrangler deploy`; the PIN key is the `PEPPER` secret
+  (`npx wrangler secret put PEPPER`) — keep a private backup, because if it's
+  lost nobody's PIN can be checked again.
+- This replaces the old private-GitHub-repo + token sync; the `ayah-sync` repo
+  is no longer used.

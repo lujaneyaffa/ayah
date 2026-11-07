@@ -224,25 +224,35 @@
     <footer class="foot">
       <div class="sync-row">
         <button class="sync-btn" id="syncNow" type="button">⟳ Sync now</button>
-        <button class="sync-btn" id="syncSetup" type="button">⚙ Setup</button>
-        <span class="sync-note" id="syncStatus">Sync: setup needed</span>
+        <button class="sync-btn" id="syncSetup" type="button">👤 Account</button>
+        <span class="sync-note" id="syncStatus">Sync: not signed in</span>
       </div>
       <div class="sync-panel" id="syncPanel">
-        <p class="sync-note"><b>One-time setup on each device (iPhone + Mac):</b></p>
-        <p class="sync-note">1. Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com → new token ↗</a><br>
-        2. Token name: <b>ayah</b> · Expiration: <b>1 year</b><br>
-        3. Repository access → <b>Only select repositories</b> → pick <b class="repo-name">ayah-sync</b> — <b>not</b> "ayah"<br>
-        <span class="sync-warn">⚠ If you get "404 can't reach lujaneyaffa/ayah-sync", the token is scoped to the wrong repo (or a different GitHub account). Re-create it above and select <b>ayah-sync</b>.</span>
-        4. Permissions → <b>Contents</b> → <b>Read and write</b> → Generate token<br>
-        5. Copy the code and paste it here:</p>
-        <div class="sync-row">
-          <input id="syncToken" type="password" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false" />
-          <button class="sync-btn" id="syncSave" type="button">Save</button>
-          <button class="sync-btn" id="syncTest" type="button">✔ Test</button>
+        <div id="acctOut">
+          <p class="sync-note"><b>Free account — no email needed.</b> Back up what you've memorized and keep your place across your phone and computer.</p>
+          <div class="sync-row">
+            <input id="acctUser" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="30" />
+            <input id="acctPin" type="password" inputmode="numeric" placeholder="PIN (6–12 digits)" autocomplete="current-password" maxlength="12" />
+          </div>
+          <div class="sync-row">
+            <button class="sync-btn" id="acctLogin" type="button">Log in</button>
+            <button class="sync-btn" id="acctSignup" type="button">Create account</button>
+          </div>
+          <p class="sync-note">Your PIN is scrambled on the server and can't be read back — but there's no way to reset it, so remember it.</p>
         </div>
-        <p class="sync-note">The token lives only in this device's browser storage — never in the app's code — and unlocks nothing except the private <b>ayah-sync</b> repo.</p>
+        <div id="acctIn" hidden>
+          <p class="sync-note">Signed in as <b id="acctName"></b>. Your memorized ayahs, place and settings sync to every device you log in on.</p>
+          <div class="sync-row">
+            <button class="sync-btn" id="acctLogout" type="button">Log out</button>
+          </div>
+          <div class="sync-row">
+            <input id="acctDelPin" type="password" inputmode="numeric" placeholder="PIN, to delete account" autocomplete="off" maxlength="12" />
+            <button class="sync-btn" id="acctDelete" type="button">Delete account</button>
+          </div>
+        </div>
+        <p class="sync-warn" id="acctMsg" role="status"></p>
       </div>
-      <span>Data: Quran.com · Saved on this device automatically</span>
+      <span>Data: Quran.com · Saved on this device automatically · <a href="./privacy.html">Privacy</a></span>
             <span class="ver" id="appVersion"></span>
       <pre id="diagLog" class="diag-log" hidden></pre>
     </footer>

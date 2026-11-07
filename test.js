@@ -181,14 +181,45 @@ console.log("\n--- Integration: verse loading pipeline ---");
   const payloadLocal = vm.runInContext("collectSyncPayload()", sandbox);
   check("a device with a real local spot pushes ITS position (2:55)", payloadLocal.lastVerse === "2:55");
 
-  // --- b64decode regression (v27): the cloud pull MUST actually decode base64.
-  // The old implementation omitted atob — every pull failed to parse, pushes
-  // were blocked, and stars/position never merged. Lock the round-trip in.
-  const { b64encode, b64decode } = vm.runInContext("({b64encode, b64decode})", sandbox);
-  const sampleJson = JSON.stringify({ memorized: ["2:1", "2:2"], lastVerse: "2:50", device: "dev-regression" });
-  check("b64decode(b64encode(json)) round-trips exactly", b64decode(b64encode(sampleJson)) === sampleJson);
-  check("b64decode of a real GitHub-content payload parses to JSON object",
-    JSON.parse(b64decode(b64encode(sampleJson))).lastVerse === "2:50");
+  // --- Accounts sync: talks to the accounts server through a fake one here ---
+  const realFetch = sandbox.fetch;
+  const cloud = { version: 0, data: null, puts: [], raceOnce: false };
+  sandbox.fetch = async (url, opts = {}) => {
+    const reply = (status, body) => ({ status, ok: status >= 200 && status < 300, json: async () => body });
+    if ((opts.headers || {}).Authorization !== "Bearer tok123") return reply(401, { error: "unauthorized" });
+    if (opts.method === "PUT") {
+      const b = JSON.parse(opts.body);
+      cloud.puts.push(b);
+      if (cloud.raceOnce) { cloud.raceOnce = false; cloud.version++; cloud.data = { memorized: ["3:3"], savedAt: 1 }; }
+      if (b.baseVersion !== cloud.version) return reply(409, { error: "conflict", version: cloud.version, data: cloud.data });
+      cloud.version++;
+      cloud.data = b.data;
+      return reply(200, { version: cloud.version });
+    }
+    return reply(200, { version: cloud.version, data: cloud.data });
+  };
+  // (the fake DOM here can't draw the memorized list, which merging a new star triggers)
+  vm.runInContext("var __realRenderMemorized = renderMemorized; renderMemorized = function () {};", sandbox);
+  vm.runInContext('state.session = { token: "tok123", username: "t" }; state.syncOn = true; state.memorized = new Set(["1:1"]);', sandbox);
+  const firstPush = await vm.runInContext("pushSync()", sandbox);
+  check("first push into an empty account lands as version 1 and carries local stars",
+    firstPush === true && cloud.version === 1 && cloud.puts[0].baseVersion === 0 && cloud.data.memorized.includes("1:1"));
+  cloud.raceOnce = true; // another device writes between our read and our write
+  const racedPush = await vm.runInContext("pushSync()", sandbox);
+  check("a write that loses a race re-reads, merges (union) and still lands",
+    racedPush === true && cloud.data.memorized.includes("1:1") && cloud.data.memorized.includes("3:3"));
+  check("the retry is based on the version the other device wrote",
+    cloud.puts[cloud.puts.length - 1].baseVersion === cloud.version - 1);
+  vm.runInContext('state.session = { token: "expired", username: "t" };', sandbox);
+  const afterExpiry = await vm.runInContext("pullSync(false)", sandbox);
+  check("an expired session logs this device out (and keeps local data)",
+    afterExpiry === null && vm.runInContext("state.session", sandbox) === null &&
+    vm.runInContext("state.memorized.has('1:1')", sandbox));
+  vm.runInContext('wipeLocalSyncedData()', sandbox);
+  check("switching accounts wipes the previous person's stars and baselines",
+    vm.runInContext("state.memorized.size === 0 && lastRemoteMemorized.size === 0 && lastRemotePos === null", sandbox));
+  sandbox.fetch = realFetch;
+  vm.runInContext("renderMemorized = __realRenderMemorized;", sandbox);
 
   // --- Multi-ayah loop (v30) ---
   vm.runInContext('state.loop = { on: true, from: "2:1", to: "2:3" }; state.currentKey = "2:3";', sandbox);

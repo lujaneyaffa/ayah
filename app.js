@@ -145,14 +145,17 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v47"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v48"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
 // long before the sync section at the bottom would execute (TDZ crash otherwise).
 const LS_SYNC_META = "ayah.syncMeta.v1";
 const LS_SYNC_ON = "ayah.syncOn.v1";
-const LS_SYNC_TOKEN = "ayah.syncToken.v1";
+const LS_SESSION = "ayah.session.v1";
+const LS_LAST_USER = "ayah.lastUser.v1";
+// The old GitHub-token sync is gone; don't leave a personal access token sitting in storage.
+try { localStorage.removeItem("ayah.syncToken.v1"); } catch { /* ignore */ }
 const TAFSIR_ID = 169; // Ibn Kathir (Abridged) — English
 
 /* ---------- Recitations (Quran.com audio reciters) ---------- */
@@ -252,7 +255,7 @@ const state = {
   tafsirCache: loadJSON(LS_TAFSIRCACHE, {}),
   syncOn: loadJSON(LS_SYNC_ON, true),
   syncMeta: loadJSON(LS_SYNC_META, { savedAt: 0, deviceId: null }),
-  syncToken: loadJSON(LS_SYNC_TOKEN, ""),
+  session: (() => { const x = loadJSON(LS_SESSION, null); return x && typeof x.token === "string" && typeof x.username === "string" ? x : null; })(),
   lastNavAt: Number(loadJSON(LS_NAV_AT, 0)),
   syncBusy: false
 };
@@ -314,9 +317,17 @@ const dom = {
   syncNow: $("#syncNow"),
   syncSetup: $("#syncSetup"),
   syncPanel: $("#syncPanel"),
-  syncToken: $("#syncToken"),
-  syncSave: $("#syncSave"),
-  syncTest: $("#syncTest"),
+  acctOut: $("#acctOut"),
+  acctIn: $("#acctIn"),
+  acctName: $("#acctName"),
+  acctUser: $("#acctUser"),
+  acctPin: $("#acctPin"),
+  acctLogin: $("#acctLogin"),
+  acctSignup: $("#acctSignup"),
+  acctLogout: $("#acctLogout"),
+  acctDelPin: $("#acctDelPin"),
+  acctDelete: $("#acctDelete"),
+  acctMsg: $("#acctMsg"),
   syncStatus: $("#syncStatus"),
   appVersion: $("#appVersion"),
   diagLog: $("#diagLog"),
@@ -1347,7 +1358,7 @@ async function onBackOnline() {
     }
     // Data refresh over the fresh connection: same order as the Sync now
     // button — push this device's real state, then adopt the cloud position.
-    if (state.syncOn && state.syncToken) {
+    if (state.syncOn && state.session) {
       const pushed = await pushSync();
       await pullSync(true);
       refreshSyncStatus();
@@ -1427,17 +1438,19 @@ async function checkForUpdates(manual) {
 }
 
 /* ================================================================
-   Sync (iPhone <-> Mac) — through your own private GitHub repo.
-   Backend: lujaneyaffa/ayah-sync (private) → sync.json via the GitHub
-   Contents API, authorized by a personal token YOU paste per device.
-   The token lives only in each device's localStorage — never in the
-   code. Rules: last-write-wins for settings; memorized stars merge
-   as a UNION so a star can never be lost. Fails silent, always.
+   Accounts + sync (iPhone <-> Mac). Make a free account (username + PIN,
+   no email) and what you've memorized, your place and your settings follow
+   you between devices. The app is a static site, so accounts live on a
+   small server of their own (accounts-api/, a Cloudflare Worker); a login
+   gives each device a session token kept in localStorage.
+   Rules: last-write-wins for settings; memorized stars merge as a UNION so
+   a star can never be lost. Fails silent, always.
    ================================================================ */
-const GH_API = "https://api.github.com";
-const SYNC_REPO = "lujaneyaffa/ayah-sync";
-const SYNC_FILE = "sync.json";
-let syncSha = null; // last-known blob sha — compare-and-swap for writes
+const ACCOUNTS_API =
+  typeof location !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+    ? "http://localhost:8787"
+    : "https://ayah-accounts.lujane.workers.dev";
+let syncVersion = 0; // version of the account's cloud copy we last saw — compare-and-swap for writes
 /* The UNION baseline that stops any device from erasing another device's
    stars. We PERSIST the last set we saw in the cloud and only treat an empty
    pull as "cloud is empty" after we ACTUALLY read it — so a push that races
@@ -1451,35 +1464,35 @@ let lastRemoteMemorized = new Set(loadJSON(LS_REMOTE_MEM, []).filter((k) => type
 const LS_REMOTE_POS = "ayah.remotePos.v1";
 let lastRemotePos = loadJSON(LS_REMOTE_POS, null);
 let baselineKnown = false; // true only once we've read the cloud this session
-// LS_SYNC_META / LS_SYNC_ON / LS_SYNC_TOKEN live in the top constants block.
+// LS_SYNC_META / LS_SYNC_ON / LS_SESSION live in the top constants block.
 
-function syncReady() { return !!(state.syncOn && state.syncToken); }
-function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
-// b64decode MUST actually base64-decode (atob) before URL-unescaping.
-// The old version omitted atob, so every cloud pull failed to parse — reads
-// returned null, and v23+ correctly refused to write ("couldn't read first").
-function b64decode(str) { return decodeURIComponent(escape(atob(String(str).replace(/\s+/g, "")))); }
-function ghHeaders(extra) {
-  return Object.assign({
-    Authorization: "Bearer " + state.syncToken,
-    Accept: "application/vnd.github+json"
-  }, extra || {});
+function syncReady() { return !!(state.syncOn && state.session); }
+
+async function api(path, { method = "GET", body, auth = true } = {}) {
+  const headers = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (auth && state.session) headers.Authorization = "Bearer " + state.session.token;
+  const res = await fetch(ACCOUNTS_API + path, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store"
+  });
+  let data = null;
+  try { data = await res.json(); } catch { /* empty or non-JSON body */ }
+  return { status: res.status, ok: res.ok, data };
 }
 
-/* Try to pull a readable reason out of a GitHub API error response. */
-async function ghErr(res) {
-  try {
-    const body = await res.json();
-    const msg = (body && (body.message || body.error)) || res.statusText;
-    return `${res.status}: ${msg}`;
-  } catch {
-    return String(res.status);
-  }
+function setSession(session) {
+  state.session = session;
+  if (session) saveJSON(LS_SESSION, session);
+  else { try { localStorage.removeItem(LS_SESSION); } catch { /* ignore */ } }
+  renderAccountPanel();
 }
-async function syncFail(res, label) {
-  const err = await ghErr(res);
-  syncStatusMsg(`${label} (${err}) — ⚙ Setup → Test`);
-  console.warn("[Ayah sync]", label, err);
+function sessionExpired() {
+  baselineKnown = false;
+  setSession(null);
+  syncStatusMsg("logged out — tap 👤 Account to log back in");
 }
 
 function deviceId() {
@@ -1491,6 +1504,9 @@ function deviceId() {
 }
 function syncStatusMsg(msg) {
   if (dom.syncStatus) dom.syncStatus.textContent = "Sync: " + msg;
+}
+function clockHHMM(d) {
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
 }
 function collectSyncPayload() {
   // Union local stars with the last set we saw in the cloud so a push from one
@@ -1525,20 +1541,16 @@ async function debugDump() {
   if (!dom.diagLog) { toast("diag: element missing"); return; }
   let remote = null;
   try {
-    const res = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, { headers: ghHeaders() });
-    if (res.ok) {
-      const j = await res.json();
-      remote = JSON.parse(b64decode(j.content || ""));
-    } else {
-      remote = { http: res.status, note: await res.text().slice(0, 200) };
-    }
+    const r = await api("/data");
+    remote = r.ok ? r.data : { http: r.status, body: r.data };
   } catch (e) {
     remote = { error: String(e && e.message ? e.message : e) };
   }
   const local = {
     thisDevice: deviceId(),
-    syncTokenPresent: !!state.syncToken,
+    signedInAs: state.session ? state.session.username : null,
     syncReady: syncReady(),
+    syncVersion: syncVersion,
     baselineKnown: baselineKnown,
     localLastVerse: loadJSON(LS_LAST, null),
     localLastNavAt: state.lastNavAt,
@@ -1549,7 +1561,7 @@ async function debugDump() {
   const willPush = collectSyncPayload();
   const report =
     "LOCAL:\n" + JSON.stringify(local, null, 2) + "\n" +
-    "\nCLOUD (current sync.json):\n" + JSON.stringify(remote, null, 2) + "\n" +
+    "\nCLOUD (your account's current copy):\n" + JSON.stringify(remote, null, 2) + "\n" +
     "\nWILL-PUSH (next payload):\n" + JSON.stringify(willPush, null, 2);
   dom.diagLog.textContent = report;
   dom.diagLog.hidden = false;
@@ -1564,7 +1576,7 @@ function queuePush() {
 }
 async function pushSync() {
   if (!syncReady() || state.syncBusy) return false;
-  if (typeof fetch !== "function" || typeof btoa !== "function") return false;
+  if (typeof fetch !== "function") return false;
   state.syncBusy = true;
   syncStatusMsg("syncing…");
   let ok = false;
@@ -1577,6 +1589,7 @@ async function pushSync() {
       // never yank this device's real spot either.
       const baseline = await pullSync(false);
       if (baseline) applyRemote(baseline, false);
+      if (!state.session) break; // the session ended during the read
       if (!baselineKnown) {
         syncStatusMsg("sync paused — couldn't read cloud first (will retry)");
         break;
@@ -1585,40 +1598,14 @@ async function pushSync() {
       // Visible proof of what this device is writing to the cloud.
       console.log("[ayah sync] pushing", JSON.stringify(payload));
       if (attempt === 0) syncStatusMsg("pushed " + (payload.lastVerse || "no position"));
-      const body = {
-        message: "Ayah sync " + new Date().toISOString(),
-        content: b64encode(JSON.stringify(payload)),
-        branch: "main"
-      };
-      if (syncSha) body.sha = syncSha;
-      const res = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}`, {
-        method: "PUT",
-        headers: ghHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body)
-      });
-      if ((res.status === 409 || res.status === 422) && attempt < 2) {
-        // Your other device wrote first (409) or we didn't know the sha yet (422):
-        // pull the latest, union-merge locally, retry with the fresh sha.
-        syncSha = null;
-        const remote = await pullSync(false);
-        if (remote) applyRemote(remote, false);
-        continue;
-      }
-      if (res.status === 401) { await syncFail(res, "✗ token invalid or revoked"); break; }
-      if (res.status === 403) { await syncFail(res, "✗ token can't write (needs Contents Read+write)"); break; }
-      if (res.status === 404) {
-        await syncFail(res, "✗ no access to the sync repo — re-create token & select 'ayah-sync'");
-        break;
-      }
-      if (!res.ok) { await syncFail(res, "✗ sync failed"); break; }
-      const done = await res.json();
-      if (done && done.content && done.content.sha) syncSha = done.content.sha;
+      const r = await api("/data", { method: "PUT", body: { baseVersion: syncVersion, data: payload } });
+      if (r.status === 409 && attempt < 2) continue; // your other device wrote first: re-read, merge, retry
+      if (r.status === 401) { sessionExpired(); break; }
+      if (!r.ok) { syncStatusMsg(`sync failed (${r.status})`); break; }
+      syncVersion = r.data.version;
       state.syncMeta.savedAt = Date.now();
       saveJSON(LS_SYNC_META, state.syncMeta);
-      const t = new Date();
-      const hh = String(t.getHours()).padStart(2, "0");
-      const mm = String(t.getMinutes()).padStart(2, "0");
-      syncStatusMsg("synced " + hh + ":" + mm + " → cloud ✓");
+      syncStatusMsg("synced " + clockHHMM(new Date()) + " → cloud ✓");
       ok = true;
     }
   } catch (e) {
@@ -1631,34 +1618,15 @@ async function pushSync() {
 async function pullSync(applyPosition) {
   if (!syncReady() || typeof fetch !== "function") return null;
   try {
-    const res = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, {
-      headers: ghHeaders()
-    });
-    if (res.status === 404) {
-      // GitHub returns 404 both when the file doesn't exist yet AND when the
-      // token can't see the private repo. Probe the repo endpoint to tell apart.
-      try {
-        const rp = await fetch(`${GH_API}/repos/${SYNC_REPO}`, { headers: ghHeaders() });
-        if (rp.ok) { syncSha = null; baselineKnown = true; return null; } // repo visible → file not created yet; cloud is KNOWN empty
-      } catch { /* fall through to the warning below */ }
-      await syncFail(res, "✗ token can't access the sync repo — re-create token & select 'ayah-sync'");
-      baselineKnown = false;
-      return null;
-    }
-    if (res.status === 401) { baselineKnown = false; await syncFail(res, "✗ token invalid or revoked"); return null; }
-    if (res.status === 403) { baselineKnown = false; await syncFail(res, "✗ token can't read (needs Contents access)"); return null; }
-    if (!res.ok) { baselineKnown = false; await syncFail(res, "✗ pull failed"); return null; }
-    const meta = await res.json();
-    syncSha = meta.sha || null;
-    let remote = null;
-    try { remote = JSON.parse(b64decode(meta.content || "")); } catch { remote = null; }
+    const r = await api("/data");
+    if (r.status === 401) { sessionExpired(); return null; }
+    if (!r.ok || !r.data) { baselineKnown = false; syncStatusMsg(`pull failed (${r.status})`); return null; }
+    syncVersion = r.data.version || 0;
+    baselineKnown = true; // we really read the cloud (an empty account counts: it is KNOWN empty)
+    const remote = r.data.data;
     if (remote && typeof remote === "object") {
-      baselineKnown = true;
       applyRemote(remote, applyPosition);
-      const t = new Date();
-      const hh = String(t.getHours()).padStart(2, "0");
-      const mm = String(t.getMinutes()).padStart(2, "0");
-      syncStatusMsg("synced " + hh + ":" + mm);
+      syncStatusMsg("synced " + clockHHMM(new Date()));
       return remote;
     }
     return null;
@@ -1669,92 +1637,6 @@ async function pullSync(applyPosition) {
   }
 }
 
-/* Diagnose a saved token against GitHub, step by step. Safe: the probe file
-   it creates is deleted immediately after. */
-async function syncTest() {
-  if (!state.syncToken) { syncStatusMsg("paste a token first — ⚙ Setup"); return; }
-  syncStatusMsg("testing token…");
-  const parts = [];
-  try {
-    // 1. Is the token itself valid? Who is it?
-    let r = await fetch(`${GH_API}/user`, { headers: ghHeaders() });
-    if (r.ok) {
-      const u = await r.json();
-      parts.push("✓ token OK (“" + u.login + "”)");
-    } else {
-      parts.push(`✗ 401 — token invalid or revoked (${await ghErr(r)})`);
-      syncStatusMsg(parts.join(" · "));
-      return;
-    }
-    // 2. Can it see the sync repo at all?
-    r = await fetch(`${GH_API}/repos/${SYNC_REPO}`, { headers: ghHeaders() });
-    parts.push(r.ok ? "✓ can see lujaneyaffa/ayah-sync" : `✗ ${r.status} — repo not visible → re-create token & select 'ayah-sync' (not 'ayah')`);
-
-    // 3. Can it read the sync file?
-    r = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, { headers: ghHeaders() });
-    if (r.ok) {
-      const m = await r.json();
-      syncSha = m.sha || null;
-      parts.push("✓ can read sync.json");
-    } else if (r.status === 404) {
-      parts.push("✓ read OK (file not created yet — will be)");
-    } else {
-      parts.push(`✗ ${r.status} — read blocked`);
-    }
-
-    // 4. Can it write? (create a tiny probe, then delete it). Use a UNIQUE
-    //    path per attempt and sweep any leftover probes first, so a prior
-    //    leftover or a concurrent writer can never misreport a working token.
-    const sweepProbes = async () => {
-      try {
-        const list = await (await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/`, { headers: ghHeaders() })).json();
-        if (Array.isArray(list)) {
-          for (const item of list) {
-            if (item.type === "file" && /^_probe-.*\.txt$/.test(item.name || "")) {
-              fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${encodeURIComponent(item.name)}`, {
-                method: "DELETE",
-                headers: ghHeaders({ "Content-Type": "application/json" }),
-                body: JSON.stringify({ message: "probe cleanup", sha: item.sha })
-              }).catch(() => {});
-            }
-          }
-        }
-      } catch { /* best-effort sweep */ }
-    };
-    await sweepProbes();
-    const probe = "_probe-" + deviceId().replace("dev-", "") + "-" + Date.now() + ".txt";
-    r = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${encodeURIComponent(probe)}`, {
-      method: "PUT",
-      headers: ghHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ message: "probe", content: b64encode("1"), branch: "main" })
-    });
-    if (r.ok) {
-      parts.push("✓ can write (probe removed)");
-      const m = await r.json();
-      if (m && m.content && m.content.sha) {
-        fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${encodeURIComponent(probe)}`, {
-          method: "DELETE",
-          headers: ghHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ message: "probe cleanup", sha: m.content.sha })
-        }).catch(() => {});
-      }
-    } else if (r.status === 403) {
-      parts.push("✗ 403 — write blocked: token needs Contents permission → Read and write (it's read-only now)");
-    } else if (r.status === 404) {
-      parts.push("✗ 404 — write blocked: token's 'Only select repositories' doesn't include ayah-sync");
-    } else if (r.status === 409 || r.status === 422) {
-      // Reaching here means auth PASSED (these statuses only happen post-auth);
-      // a unique fresh name means a genuine concurrent write — the token CAN write.
-      parts.push("✓ can write (concurrent writer, ~" + r.status + ")");
-    } else {
-      parts.push(`✗ ${r.status} — write blocked (${await ghErr(r)})`);
-    }
-  } catch (e) {
-    parts.push("network error during test (" + (e && e.message ? e.message : "fetch failed") + ")");
-  }
-  syncStatusMsg(parts.join(" · "));
-  console.warn("[Ayah sync test]", parts.join(" · "));
-}
 function applyRemote(remote, applyPosition) {
   let touched = false;
   // Keep the union baseline in sync with the cloud AND persisted to disk, so a
@@ -1850,50 +1732,122 @@ function applyRemote(remote, applyPosition) {
   if (touched) renderRead();
 }
 function refreshSyncStatus() {
-  if (!state.syncToken) {
-    syncStatusMsg("setup needed — tap ⚙ Setup");
+  if (!state.session) {
+    syncStatusMsg("not signed in — tap 👤 Account to back up & sync");
   } else if (state.syncMeta.savedAt) {
-    const t = new Date(state.syncMeta.savedAt);
-    const hh = String(t.getHours()).padStart(2, "0");
-    const mm = String(t.getMinutes()).padStart(2, "0");
-    syncStatusMsg(`on — last ${hh}:${mm}`);
+    syncStatusMsg(`on — last ${clockHHMM(new Date(state.syncMeta.savedAt))}`);
   } else {
     syncStatusMsg("on — first sync pending");
   }
 }
+
+/* ---- Account panel (log in / create account / log out / delete) ---- */
+function acctMsg(text) {
+  if (dom.acctMsg) dom.acctMsg.textContent = text || "";
+}
+function renderAccountPanel() {
+  const on = !!state.session;
+  if (dom.acctOut) dom.acctOut.hidden = on;
+  if (dom.acctIn) dom.acctIn.hidden = !on;
+  if (dom.acctName) dom.acctName.textContent = on ? state.session.username : "";
+  if (dom.syncSetup) dom.syncSetup.textContent = on ? "👤 " + state.session.username : "👤 Account";
+}
+// Another person's account on this device must never inherit the previous
+// person's stars or place, so switching accounts starts from a clean slate.
+function wipeLocalSyncedData() {
+  state.memorized = new Set();
+  state.lastNavAt = 0;
+  state.syncMeta.savedAt = 0;
+  lastRemoteMemorized = new Set();
+  lastRemotePos = null;
+  baselineKnown = false;
+  syncVersion = 0;
+  for (const k of [LS_MEMORIZED, LS_LAST, LS_NAV_AT, LS_REMOTE_MEM, LS_REMOTE_POS]) {
+    try { localStorage.removeItem(k); } catch { /* ignore */ }
+  }
+  saveJSON(LS_SYNC_META, state.syncMeta);
+  renderMemorized();
+}
+async function authenticate(kind) {
+  const username = (dom.acctUser.value || "").trim();
+  const pin = (dom.acctPin.value || "").trim();
+  if (!username || !pin) { acctMsg("Enter a username and a PIN."); return; }
+  const buttons = [dom.acctLogin, dom.acctSignup];
+  buttons.forEach((b) => { if (b) b.disabled = true; });
+  acctMsg(kind === "signup" ? "Creating your account…" : "Logging in…");
+  try {
+    const r = await api("/" + kind, { method: "POST", auth: false, body: { username, pin } });
+    if (!r.ok || !r.data || !r.data.token) {
+      acctMsg((r.data && r.data.error) || `Couldn't ${kind === "signup" ? "create the account" : "log in"} (${r.status}).`);
+      return;
+    }
+    dom.acctPin.value = "";
+    acctMsg("");
+    const name = r.data.username;
+    const previous = loadJSON(LS_LAST_USER, null);
+    if (previous && previous !== name) wipeLocalSyncedData();
+    saveJSON(LS_LAST_USER, name);
+    setSession({ token: r.data.token, username: name });
+    toast(kind === "signup" ? "Account created — syncing…" : "Logged in — syncing…");
+    // If this device has a real spot it has read before, keep it — don't let
+    // another device's position teleport it. A brand-new device (no saved
+    // spot) still adopts the account's position so it starts where you left off.
+    const hasLocalSpot = !!loadJSON(LS_LAST, null);
+    await pullSync(!hasLocalSpot);
+    await pushSync(); // then write this device's state (always)
+    refreshSyncStatus();
+    if (dom.syncPanel) dom.syncPanel.classList.remove("is-open");
+  } catch {
+    acctMsg("Can't reach the server — check your connection and try again.");
+  } finally {
+    buttons.forEach((b) => { if (b) b.disabled = false; });
+  }
+}
+async function logOut() {
+  if (!state.session) return;
+  try { await pushSync(); } catch { /* best effort: one last save before leaving */ }
+  api("/logout", { method: "POST" }).catch(() => {});
+  baselineKnown = false;
+  setSession(null);
+  refreshSyncStatus();
+  toast("Logged out");
+}
+async function deleteAccount() {
+  const pin = (dom.acctDelPin.value || "").trim();
+  if (!pin) { acctMsg("Enter your PIN to confirm."); return; }
+  if (!confirm("Delete this account and its synced copy for good? This device keeps what it has locally.")) return;
+  try {
+    const r = await api("/delete-account", { method: "POST", body: { pin } });
+    if (!r.ok) { acctMsg((r.data && r.data.error) || `Couldn't delete (${r.status}).`); return; }
+    dom.acctDelPin.value = "";
+    acctMsg("");
+    saveJSON(LS_LAST_USER, null);
+    baselineKnown = false;
+    setSession(null);
+    refreshSyncStatus();
+    toast("Account deleted");
+  } catch {
+    acctMsg("Can't reach the server — check your connection and try again.");
+  }
+}
 function wireSync() {
+  renderAccountPanel();
   if (dom.syncSetup) {
     dom.syncSetup.addEventListener("click", () => {
       dom.syncPanel.classList.toggle("is-open");
     });
   }
-  if (dom.syncSave) {
-    dom.syncSave.addEventListener("click", async () => {
-      const tok = (dom.syncToken.value || "").trim();
-      if (!tok) { syncStatusMsg("paste the token first"); return; }
-      state.syncToken = tok;
-      saveJSON(LS_SYNC_TOKEN, tok);
-      dom.syncToken.value = "";
-      toast("Token saved — syncing…");
-      syncStatusMsg("checking…");
-      // If this device has a real spot it has read before, keep it — don't let
-      // another device's position teleport it. A brand-new device (no saved
-      // spot) still adopts the remote position so it starts where you left off.
-      const hasLocalSpot = !!(loadJSON(LS_LAST, null));
-      await pullSync(!hasLocalSpot);
-      await pushSync();     // then write this device's state (always)
-      if (dom.syncPanel) dom.syncPanel.classList.remove("is-open");
-    });
-  }
-  if (dom.syncTest) {
-    dom.syncTest.addEventListener("click", syncTest);
-  }
+  if (dom.acctLogin) dom.acctLogin.addEventListener("click", () => authenticate("login"));
+  if (dom.acctSignup) dom.acctSignup.addEventListener("click", () => authenticate("signup"));
+  if (dom.acctPin) dom.acctPin.addEventListener("keydown", (e) => { if (e.key === "Enter") authenticate("login"); });
+  if (dom.acctLogout) dom.acctLogout.addEventListener("click", logOut);
+  if (dom.acctDelete) dom.acctDelete.addEventListener("click", deleteAccount);
   if (dom.syncNow) {
     dom.syncNow.addEventListener("click", async () => {
-      if (!state.syncToken) {
+      if (!state.session) {
         if (dom.syncPanel) dom.syncPanel.classList.add("is-open");
-        syncStatusMsg("paste token first — see Setup");
-        toast("Add your GitHub token first");
+        acctMsg("Log in or create an account to sync.");
+        toast("Log in first");
         return;
       }
       state.syncOn = true;
@@ -1904,13 +1858,8 @@ function wireSync() {
       // adopt a genuinely newer real read from the other device.
       const pushed = await pushSync();
       await pullSync(true);
-      refreshSyncStatus();
-      if (pushed) {
-        console.log("[ayah sync] Sync Now: write landed on GitHub ✓");
-      } else {
-        syncStatusMsg("read-only sync — write was skipped (tap ⚙ Setup → Test)");
-        console.warn("[ayah sync] Sync Now: write did NOT land");
-      }
+      if (state.session && !pushed) syncStatusMsg("write was skipped — check your connection and try again");
+      else refreshSyncStatus();
     });
   }
   document.addEventListener("visibilitychange", () => {
@@ -1919,11 +1868,11 @@ function wireSync() {
   setInterval(() => {
     if (!document.hidden) syncCycle();
   }, 90000);
-    refreshSyncStatus();
+  refreshSyncStatus();
 
   // Triple-tap the footer (version span) to reveal a diagnostics dump:
-  // local state, current cloud sync.json, and the exact payload this device
-  // is about to push. Non-intrusive — single/double taps still do nothing.
+  // local state, your account's current cloud copy, and the exact payload this
+  // device is about to push. Non-intrusive — single/double taps still do nothing.
   let footClicks = 0;
   let footTimer = null;
   const foot = dom.appVersion || $("#appVersion") || document.querySelector(".foot");
