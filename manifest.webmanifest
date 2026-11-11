@@ -1,6 +1,6 @@
 {
-  "name": "Ayah — Quran Verse Widget",
-  "short_name": "Ayah",
+  "name": "12 Years — Quran memorization",
+  "short_name": "12 Years",
   "description": "A calm widget that shows one ayah at a time, with translation and links to tafsir. Move through the Qur'an verse by verse and track what you've memorized.",
   "start_url": "./",
   "scope": "./",
