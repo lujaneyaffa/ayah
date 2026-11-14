@@ -199,8 +199,8 @@ FakeFetchResponse._body = JSON.stringify({
   check("palette wrapped in fallback try/catch (top-level can never crash)", CODE.indexOf("catch (palErr)") !== -1);
   check("fetch has hard timeout race", CODE.indexOf("withTimeout") !== -1 && CODE.indexOf("Promise.race") !== -1);
   check("every path presents via present()", CODE.indexOf("function present(w)") !== -1 && CODE.indexOf("let presented") !== -1 && CODE.indexOf("Script.setWidget(w);") !== -1 === false || CODE.indexOf("function present(w)") !== -1);
-  check("in-app watchdog guarantees a preview on stall", CODE.indexOf("Timer.schedule") !== -1 && CODE.indexOf("Ayah widget stalled") !== -1);
-  check("script logs breadcrumbs to the console", CODE.indexOf('console.log("[Ayah widget] script starting') !== -1);
+  check("in-app watchdog guarantees a preview on stall", CODE.indexOf("Timer.schedule") !== -1 && CODE.indexOf("12 Years widget stalled") !== -1);
+  check("script logs breadcrumbs to the console", CODE.indexOf('console.log("[12 Years widget] script starting') !== -1);
 
   console.log(pass ? "\nALL WIDGET CHECKS PASSED ✔" : "\nSOME WIDGET CHECKS FAILED ✘");
   process.exit(pass ? 0 : 1);

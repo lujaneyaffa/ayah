@@ -97,7 +97,7 @@ check("refresh sets tafsir checked", boxes["#dispTafsir"].checked === true);
   await new Promise((r) => setTimeout(r, 10));
   const domC = vm.runInContext("({ar: dom.readArabic, meta: dom.readMeta})", sandbox);
   check("renderRead: none → arabic hidden", domC.ar.hidden === true);
-  check("renderRead: none → hint in meta", (domC.meta.textContent || "").includes("Nothing selected"));
+  check("renderRead: none → hint in meta", (domC.meta.textContent || "").includes("Choose Arabic, English or Tafsir"));
 
   console.log("\n" + (pass ? "ALL DISPLAY CHECKS PASSED ✔" : "SOME DISPLAY CHECKS FAILED ✘"));
   process.exit(pass ? 0 : 1);

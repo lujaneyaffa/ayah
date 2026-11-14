@@ -1,7 +1,7 @@
 {
   "name": "12 Years — Quran memorization",
   "short_name": "12 Years",
-  "description": "A calm widget that shows one ayah at a time, with translation and links to tafsir. Move through the Qur'an verse by verse and track what you've memorized.",
+  "description": "A calm place to memorize the Quran slowly, one ayah at a time. Read, listen, and recite aloud. Free, works offline, no ads.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

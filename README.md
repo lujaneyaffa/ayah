@@ -1,8 +1,11 @@
-# Ayah — Quran Verse Widget
+# 12 Years — memorize the Quran, one ayah at a time
 
-A calm widget that shows one ayah at a time, with translation from Quran.com.
-A **fully self-owned, dependency-free static PWA** — no build step, no Vercel,
-no subscriptions, no v0 credits.
+A calm study partner for memorizing the Quran slowly. Read an ayah, listen to it,
+say it back, and keep your place. Named for the report that Umar ibn al-Khattab
+spent twelve years learning Surat al-Baqarah: there is no rush.
+
+A **free, fast, dependency-free static PWA** — no build step, no ads, works offline.
+(An account is optional and only used to keep your progress across devices.)
 
 ## Where it lives
 - **Live app:** https://lujaneyaffa.github.io/ayah/
@@ -90,7 +93,7 @@ re-paste it in Scriptable.
 macOS 15.6 supports Safari web widgets:
 1. Open the URL in Safari.
 2. Right-click the page → **Add to Widget** if shown, or right-click the
-   desktop → **Edit Widgets…** → search **"Ayah"** → drag it onto the desktop.
+   desktop → **Edit Widgets…** → search **"12 Years"** → drag it onto the desktop.
 3. **Tip:** for a clean resize-proof desktop widget, point Safari at
    **`/widget.html`** instead of the main page. That page auto-scales the
    Arabic + translation to fit any widget size (tested down to the longest
@@ -106,7 +109,7 @@ macOS 15.6 supports Safari web widgets:
 |---|---|
 | `index.html` | App shell + metadata |
 | `styles.css` | Design (light/dark auto) |
-| `app.js` | Logic + full 114-surah index + offline verses |
+| `app.js` | Logic + full 114-surah index + offline verses + all in-app wording |
 | `manifest.webmanifest` | PWA manifest |
 | `sw.js` | Service worker (offline) |
 | `icons/` | App icons (SVG sources + PNGs) |

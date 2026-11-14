@@ -145,7 +145,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v49"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v50"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -609,7 +609,7 @@ async function renderRead() {
   const token = ++readToken;
   dom.readCard.classList.add("is-loading");
   dom.readArabic.textContent = "…";
-  dom.readTranslation.textContent = "Loading verse…";
+  dom.readTranslation.textContent = "Opening the ayah…";
   dom.readMeta.textContent = "";
   dom.readSurah.textContent = surahNameFor(key);
   dom.readKey.textContent = key;
@@ -629,7 +629,7 @@ async function renderRead() {
   dom.readTranslation.hidden = !wantTrans;
   dom.readTafsir.hidden = !wantTafsir;
   if (!wantAr && !wantTrans && !wantTafsir) {
-    dom.readMeta.textContent = "Nothing selected — tick Arabic, English or Tafsir above.";
+    dom.readMeta.textContent = "Choose Arabic, English or Tafsir above to see the ayah.";
   }
 
   try {
@@ -665,7 +665,7 @@ async function renderRead() {
         ? `Translation: Saheeh International`
         : ((data.ar || data.en) ? "" : "Offline: showing the saved verse.");
     } else if (!wantAr && !wantTafsir) {
-      dom.readMeta.textContent = "Nothing selected — tick Arabic, English or Tafsir above.";
+      dom.readMeta.textContent = "Choose Arabic, English or Tafsir above to see the ayah.";
     } else {
       dom.readMeta.textContent = "";
     }
@@ -689,7 +689,7 @@ async function renderRead() {
   } catch (err) {
     if (token !== readToken) return;
     dom.readArabic.textContent = "—";
-    if (wantTrans) dom.readTranslation.textContent = "Couldn't load this verse (offline, no saved copy).";
+    if (wantTrans) dom.readTranslation.textContent = "This ayah isn't saved on your device yet. Open it once while online and it will be here next time.";
   } finally {
     if (token === readToken) dom.readCard.classList.remove("is-loading");
   }
@@ -825,7 +825,7 @@ function applySpeed() {
 function togglePlay() {
   const el = dom.audioEl;
   const url = dom.btnPlay.dataset.url;
-  if (!url) { toast("Audio unavailable offline"); return; }
+  if (!url) { toast("No recitation for this one while offline — it will play once you're back online."); return; }
   // Decide on app-level intent, not el.paused — the element is briefly
   // "paused" mid repeat-restart and mid verse-change, and a Pause click
   // landing in that gap must still stop playback, not restart it.
@@ -846,7 +846,7 @@ function togglePlay() {
       dom.pauseIcon.style.display = "";
     }).catch(() => {
       state.wantPlaying = false;
-      toast("Playback couldn't start (offline?)");
+      toast("The recitation couldn't start. Check your connection and try again.");
     });
   }
 }
@@ -958,10 +958,10 @@ function toggleMemorize() {
   const key = state.currentKey;
   if (state.memorized.has(key)) {
     state.memorized.delete(key);
-    toast("Removed from memorized");
+    toast("Taken off your list. Come back to it whenever you like.");
   } else {
     state.memorized.add(key);
-    toast("Marked as memorized ★");
+    toast("Masha'Allah — that one is yours now ★");
   }
   saveJSON(LS_MEMORIZED, [...state.memorized]);
   queuePush();
@@ -975,9 +975,9 @@ function renderMemorized() {
   const keys = [...state.memorized].sort((a, b) => indexFromKey(a) - indexFromKey(b));
   dom.memCount.textContent = keys.length;
   dom.memHeadline.textContent =
-    keys.length === 1 ? "1 ayah memorized" : `${keys.length} ayahs memorized`;
+    keys.length === 0 ? "Your first ayah is waiting" : keys.length === 1 ? "1 ayah memorized, masha'Allah" : `${keys.length} ayahs memorized`;
   dom.memSub.textContent =
-    keys.length ? "Keep going — review them anytime." : "Mark verses to build your list.";
+    keys.length ? "Take your time. Come back to review whenever you like." : "Mark an ayah when it feels like yours.";
   renderMemList(keys);
   applyMemView();
 }
@@ -998,7 +998,7 @@ let memPageToken = 0;
 async function renderMemPage(pageNumber) {
   if (!dom.memPageArabic) return;
   const token = ++memPageToken;
-  dom.memPageStatus.textContent = "Loading page…";
+  dom.memPageStatus.textContent = "Opening the page…";
   dom.memPageArabic.textContent = "";
   if (dom.memPageInput) dom.memPageInput.value = String(pageNumber);
   try {
@@ -1015,7 +1015,7 @@ async function renderMemPage(pageNumber) {
   } catch (err) {
     if (token !== memPageToken) return;
     dom.memPageArabic.textContent = "—";
-    dom.memPageStatus.textContent = "Couldn't load this page (offline, no saved copy).";
+    dom.memPageStatus.textContent = "This page isn't saved on your device yet. Open it once while online and it will be here next time.";
   }
 }
 
@@ -1030,10 +1030,10 @@ function goMemPage(delta) {
 function toggleMemFromPage(key) {
   if (state.memorized.has(key)) {
     state.memorized.delete(key);
-    toast("Removed from memorized");
+    toast("Taken off your list. Come back to it whenever you like.");
   } else {
     state.memorized.add(key);
-    toast("Marked as memorized ★");
+    toast("Masha'Allah — that one is yours now ★");
   }
   saveJSON(LS_MEMORIZED, [...state.memorized]);
   renderMemorized();
@@ -1045,7 +1045,7 @@ function renderMemList(keys) {
   if (!keys.length) {
     const li = document.createElement("li");
     li.className = "empty-state";
-    li.innerHTML = '<span class="big">🕌</span>Nothing memorized yet.<br/>Tap ★ on any verse to save it here.';
+    li.innerHTML = '<span class="big">🕌</span>Your list is waiting for its first ayah.<br/>Tap ★ Memorize when an ayah feels like yours.';
     dom.memList.appendChild(li);
     return;
   }
@@ -1071,7 +1071,7 @@ function renderMemList(keys) {
         state.memorized.delete(key);
         saveJSON(LS_MEMORIZED, [...state.memorized]);
         renderMemorized();
-        toast("Removed from memorized");
+        toast("Taken off your list. Come back to it whenever you like.");
       } else {
         state.currentKey = key;
         setView("read");
@@ -1213,7 +1213,7 @@ function wireEvents() {
     queuePush();
     dom.btnAuto.classList.toggle("is-on", state.autoPlay);
     dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
-    toast(state.autoPlay ? "Auto-play ON — advance to next ayah after audio" : "Auto-play OFF");
+    toast(state.autoPlay ? "Auto-play on — the next ayah will follow" : "Auto-play off");
   });
   dom.btnLoop.addEventListener("click", () => {
     state.loop.on = !state.loop.on;
@@ -1226,8 +1226,8 @@ function wireEvents() {
     queuePush();
     syncLoopUI();
     toast(state.loop.on
-      ? `Loop ON — ${state.loop.from} → ${state.loop.to} repeats until you pause`
-      : "Loop OFF");
+      ? `Looping ${state.loop.from} → ${state.loop.to} until you pause`
+      : "Loop off");
   });
   dom.refreshBtn.addEventListener("click", () => checkForUpdates(true));
   dom.repeatSelect.addEventListener("change", () => {
@@ -1320,7 +1320,7 @@ function wireEvents() {
       const choice = await state.deferredPrompt.userChoice;
       state.deferredPrompt = null;
       dom.installBtn.hidden = true;
-      if (choice.outcome === "accepted") toast("Installed 🎉");
+      if (choice.outcome === "accepted") toast("Added to your home screen. Welcome.");
     } else {
       toast("On iPhone: Safari → Share → “Add to Home Screen”");
     }
@@ -1352,7 +1352,7 @@ async function onBackOnline() {
     const remote = await fetchRemoteVersion();
     if (remote) saveJSON(LS_VERSION, remote);
     if (updateDecision(remote, APP_VERSION) === "reload") {
-      toast("New version " + remote + " — updating…");
+      toast("A fresh version is ready — updating…");
       setTimeout(() => location.reload(), 1200);
       return;
     }
@@ -1362,13 +1362,13 @@ async function onBackOnline() {
       const pushed = await pushSync();
       await pullSync(true);
       refreshSyncStatus();
-      toast(pushed ? "Back online — synced ✓" : "Back online");
+      toast(pushed ? "Back online. Your progress is saved ✓" : "Back online");
     }
   } catch { /* reconnect bookkeeping must never break the app */ }
 }
 
 function onWentOffline() {
-  toast("Offline — the app keeps working (played ayahs stay available)");
+  toast("You're offline, and that's fine. Ayahs you've opened stay with you.");
 }
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
@@ -1425,11 +1425,11 @@ async function checkForUpdates(manual) {
   btn.classList.add("is-spinning");
   try {
     if (!remote) {
-      toast("Offline — can't check for updates");
+      toast("You're offline, so no update check for now");
       return;
     }
     await refreshSW();
-    toast(remote !== local ? "New version " + remote + " — refreshing…" : "Up to date — refreshing…");
+    toast(remote !== local ? "A fresh version is ready — refreshing…" : "You're on the latest — refreshing…");
     setTimeout(() => location.reload(), 650);
   } finally {
     btn.disabled = false;
@@ -1492,7 +1492,7 @@ function setSession(session) {
 function sessionExpired() {
   baselineKnown = false;
   setSession(null);
-  syncStatusMsg("logged out — tap 👤 Account to log back in");
+  syncStatusMsg("logged out — 👤 Account to log back in");
 }
 
 function deviceId() {
@@ -1733,7 +1733,7 @@ function applyRemote(remote, applyPosition) {
 }
 function refreshSyncStatus() {
   if (!state.session) {
-    syncStatusMsg("not signed in — tap 👤 Account to back up & sync");
+    syncStatusMsg("not signed in — 👤 Account keeps your progress safe");
   } else if (state.syncMeta.savedAt) {
     syncStatusMsg(`on — last ${clockHHMM(new Date(state.syncMeta.savedAt))}`);
   } else {
@@ -1788,7 +1788,7 @@ async function authenticate(kind) {
     if (previous && previous !== name) wipeLocalSyncedData();
     saveJSON(LS_LAST_USER, name);
     setSession({ token: r.data.token, username: name });
-    toast(kind === "signup" ? "Account created — syncing…" : "Logged in — syncing…");
+    toast(kind === "signup" ? "Welcome. Saving your progress…" : "Welcome back. Bringing your progress over…");
     // If this device has a real spot it has read before, keep it — don't let
     // another device's position teleport it. A brand-new device (no saved
     // spot) still adopts the account's position so it starts where you left off.
@@ -1810,7 +1810,7 @@ async function logOut() {
   baselineKnown = false;
   setSession(null);
   refreshSyncStatus();
-  toast("Logged out");
+  toast("Logged out. Your progress stays on this device.");
 }
 async function deleteAccount() {
   const pin = (dom.acctDelPin.value || "").trim();
@@ -1825,7 +1825,7 @@ async function deleteAccount() {
     baselineKnown = false;
     setSession(null);
     refreshSyncStatus();
-    toast("Account deleted");
+    toast("Your account has been deleted");
   } catch {
     acctMsg("Can't reach the server — check your connection and try again.");
   }
@@ -1847,18 +1847,18 @@ function wireSync() {
       if (!state.session) {
         if (dom.syncPanel) dom.syncPanel.classList.add("is-open");
         acctMsg("Log in or create an account to sync.");
-        toast("Log in first");
+        toast("Log in to keep your progress across devices");
         return;
       }
       state.syncOn = true;
       saveJSON(LS_SYNC_ON, true);
-      toast("Syncing…");
+      toast("Saving…");
       // Push this device's real state first (claims the cloud, carries forward
       // the cloud's position/stars so nothing can be erased), then pull to
       // adopt a genuinely newer real read from the other device.
       const pushed = await pushSync();
       await pullSync(true);
-      if (state.session && !pushed) syncStatusMsg("write was skipped — check your connection and try again");
+      if (state.session && !pushed) syncStatusMsg("couldn't save just now — check your connection and try again");
       else refreshSyncStatus();
     });
   }
@@ -2068,9 +2068,9 @@ function alignRecitation(refWords, saidWords, saidRaw) {
 }
 // Pure: turn an accuracy score into the short verdict shown under the result.
 function recitationVerdict(accuracy) {
-  if (accuracy >= 0.9) return "Great job! ✅";
-  if (accuracy >= 0.6) return "Almost there — check the highlighted words.";
-  return "Let's practice this one more time.";
+  if (accuracy >= 0.9) return "Beautiful, masha'Allah ✅";
+  if (accuracy >= 0.6) return "So close. Have a gentle look at the highlighted words.";
+  return "That's okay, this is how it settles in. Try again whenever you're ready.";
 }
 
 let asrPipelinePromise = null;
@@ -2269,7 +2269,7 @@ async function startCheckRecording() {
   // mic streams) before the first getUserMedia await even resolves.
   if (checkRec.active || checkRec.starting) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast("Microphone not available in this browser");
+    toast("This browser can't use the microphone, so the check isn't available here");
     return;
   }
   checkRec.starting = true;
@@ -2282,7 +2282,7 @@ async function startCheckRecording() {
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
     });
   } catch {
-    toast("Microphone permission denied");
+    toast("The microphone is off for this app. Turn it on in your settings and try again.");
     checkRec.starting = false;
     return;
   }
@@ -2338,7 +2338,7 @@ async function startCheckRecording() {
   // sitting there looking like it's listening.
   checkRec.silenceTimer = setTimeout(() => {
     if (checkRec.active && !checkRec.heardSound) {
-      dom.checkStatus.textContent = "Waiting to hear you… (is your microphone muted or blocked?)";
+      dom.checkStatus.textContent = "Waiting to hear you… (check the microphone isn't muted or blocked)";
     }
   }, 6000);
   // Warm up the model the moment recording starts, so it's likely ready by
@@ -2346,7 +2346,7 @@ async function startCheckRecording() {
   // once the user taps Stop.
   getAsrPipeline((p) => {
     if (p.status === "progress" && p.file) {
-      dom.checkStatus.textContent = `Downloading checker (one-time, ~130MB): ${p.file} ${Math.round(p.progress || 0)}%`;
+      dom.checkStatus.textContent = `Getting the checker ready (one time, ~130MB): ${p.file} ${Math.round(p.progress || 0)}%`;
     }
   }).catch(() => {});
 }
@@ -2448,7 +2448,7 @@ function buildMushafRows(container, verses, ayahClassFn) {
 async function renderCheckPage(pageNumber) {
   if (!dom.checkArabic) return;
   const token = ++checkPageToken;
-  dom.checkStatus.textContent = "Loading page…";
+  dom.checkStatus.textContent = "Opening the page…";
   dom.checkResult.hidden = true;
   dom.checkArabic.textContent = "";
   state.checkRefWords = [];
@@ -2469,7 +2469,7 @@ async function renderCheckPage(pageNumber) {
   } catch (err) {
     if (token !== checkPageToken) return;
     dom.checkArabic.textContent = "—";
-    dom.checkStatus.textContent = "Couldn't load this page (offline, no saved copy).";
+    dom.checkStatus.textContent = "This page isn't saved on your device yet. Open it once while online and it will be here next time.";
   }
 }
 
@@ -2892,7 +2892,7 @@ function renderCheckReport(rep) {
     for (const it of g.items) {
       const li = el("li", `cr-item cr-${it.kind}`);
       li.dataset.idx = String(it.idx);
-      li.appendChild(el("span", "cr-tag", it.kind === "skipped" ? "Not heard" : it.kind === "wrong" ? "Said differently" : "Close"));
+      li.appendChild(el("span", "cr-tag", it.kind === "skipped" ? "Missed" : it.kind === "wrong" ? "Said differently" : "Close"));
       const exp = el("span", "cr-exp", it.expected); exp.lang = "ar"; exp.dir = "rtl";
       li.appendChild(exp);
       if (it.heard) {
@@ -2916,12 +2916,12 @@ function renderCheckReport(rep) {
 }
 
 function checkSummaryText(a) {
-  if (!a.reached) return "Couldn't match any words — try again a little louder or closer to the mic.";
+  if (!a.reached) return "Couldn't pick up any words. Try again a little closer to the mic.";
   const pct = Math.round(a.reachedAccuracy * 100);
   let t = `${a.correct}/${a.reached} words right`;
   if (a.close) t += `, ${a.close} close`;
   t += ` (${pct}%) — ${recitationVerdict(a.reachedAccuracy)}`;
-  if (a.reached < a.total) t += ` Stopped ${a.total - a.reached} words before the end of the page.`;
+  if (a.reached < a.total) t += ` You paused ${a.total - a.reached} words before the end of the page.`;
   return t;
 }
 
@@ -2931,7 +2931,7 @@ async function runMemorizationCheck() {
   dom.checkRecordBtn.textContent = "🎙 Start Reciting";
   dom.checkRecordBtn.classList.remove("is-recording");
   if (!sess || sess.cancelled || sessionSeconds(sess) < 0.1) { // nothing captured
-    dom.checkStatus.textContent = "Didn't catch anything — try again.";
+    dom.checkStatus.textContent = "Didn't catch anything that time. Whenever you're ready, try again.";
     dom.checkRecordBtn.disabled = false;
     setCheckPageNavDisabled(false);
     return;
@@ -2947,7 +2947,7 @@ async function runMemorizationCheck() {
     renderCheckReport(buildCheckReport(a, sess.refDisp, sess.ayahOf));
     dom.checkStatus.textContent = "";
   } catch (err) {
-    if (!sess.cancelled) dom.checkStatus.textContent = "Couldn't run the checker (offline and not yet downloaded?).";
+    if (!sess.cancelled) dom.checkStatus.textContent = "The checker couldn't start. It needs a connection the first time, to download.";
   } finally {
     if (!sess.cancelled) {
       dom.checkRecordBtn.disabled = false;

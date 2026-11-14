@@ -43,7 +43,7 @@
   function paint(d, offline) {
     var key = d.key || "";
     var chap = parseInt(key.split(":")[0], 10);
-    el.head.textContent = (NAMES[chap - 1] || "Ayah") + "  ·  " + key;
+    el.head.textContent = (NAMES[chap - 1] || "12 Years") + "  ·  " + key;
     el.arabic.textContent = d.ar + "  ﴿" + key.split(":")[1] + "﴾";
     el.trans.textContent = d.en || "";
     el.trans.classList.toggle("hide", !d.en);
@@ -99,7 +99,7 @@
       .catch(function () {
         if (cached && cached.ar) paint(cached, true);
         else {
-          el.head.textContent = "Ayah";
+          el.head.textContent = "12 Years";
           el.arabic.textContent = "…";
           el.trans.textContent = "Open once while online to load the verse.";
         }

@@ -1,10 +1,10 @@
-/* ── Ayah Widget for Scriptable — twin of the app's Read card ──────────
+/* ── 12 Years Widget for Scriptable — twin of the app's Read card ──────────
    Same colors (light+dark), same layout order (surah name → key pill →
    Arabic with ringed ayah badge → translation → meta), same daily verse
    math, same cleaned translation. Tap opens the app.
 
-   Setup: Scriptable (free) → "+" → paste → name "Ayah Widget" → ▶
-   Then: Home screen → "+" → Scriptable → size → Script = "Ayah Widget"
+   Setup: Scriptable (free) → "+" → paste → name "12 Years Widget" → ▶
+   Then: Home screen → "+" → Scriptable → size → Script = "12 Years Widget"
    Optional: widget Parameter "2:255" pins that verse.
    ───────────────────────────────────────────────────────────────────── */
 
@@ -12,7 +12,7 @@ const API = "https://api.quran.com/api/v4";
 const APP_URL = "https://lujaneyaffa.github.io/ayah/";
 const TRANSLATION_ID = 131; // Saheeh International — same as the app
 const TWIN_VERSION = "read-card-twin-v3";
-console.log("[Ayah widget] script starting, v" + TWIN_VERSION);
+console.log("[12 Years widget] script starting, v" + TWIN_VERSION);
 
 // 114 surah ayah counts + English names (mirrors app.js SURAHS exactly)
 const COUNTS = [7,286,200,176,120,165,206,75,129,109,123,111,43,52,99,128,111,110,98,135,112,78,118,64,77,227,93,88,69,60,34,30,73,54,45,83,182,88,75,85,54,53,89,59,37,35,38,29,18,45,60,49,62,55,78,96,29,22,24,13,14,11,11,18,12,12,30,52,52,44,28,28,20,56,40,31,50,40,46,42,29,19,36,25,22,17,19,26,30,20,15,21,11,8,8,19,5,8,8,11,11,8,3,9,5,4,7,3,6,3,5,4,5,6];
@@ -33,7 +33,7 @@ try {
   ACCENT = dyn(PAL.accentL, PAL.accentD);
   SOFT = dyn(PAL.softL, PAL.softD);
 } catch (palErr) {
-  console.log("[Ayah widget] dynamic colors unavailable, using plain: " + palErr);
+  console.log("[12 Years widget] dynamic colors unavailable, using plain: " + palErr);
   CARD = new Color(PAL.cardL); INK = new Color(PAL.inkL); MUTED = new Color(PAL.mutedL);
   ACCENT = new Color(PAL.accentL); SOFT = new Color(PAL.softL);
 }
@@ -222,7 +222,7 @@ function showErrorWidget(message) {
   try {
     const w = new ListWidget();
     w.backgroundColor = new Color("#3a1414");
-    const title = w.addText("\u26A0\uFE0F Ayah widget error");
+    const title = w.addText("\u26A0\uFE0F 12 Years widget error");
     title.font = Font.boldSystemFont(12);
     title.textColor = new Color("#ffd7d7");
     w.addSpacer(4);
@@ -236,14 +236,14 @@ function showErrorWidget(message) {
     hint.textColor = new Color("#ffbaba");
     w.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
     present(w);
-  } catch (e) { console.error("Ayah widget fatal: " + e); }
+  } catch (e) { console.error("12 Years widget fatal: " + e); }
 }
 
 /* ---------- guaranteed presentation: every path ends with something on screen ---------- */
 let presented = false;
 function present(w) {
   presented = true;
-  console.log("[Ayah widget] presenting widget");
+  console.log("[12 Years widget] presenting widget");
   Script.setWidget(w);
 }
 try {
@@ -254,7 +254,7 @@ try {
       try {
         const w = new ListWidget();
         w.backgroundColor = new Color("#3a1414");
-        const t = w.addText("⚠️ Ayah widget stalled — no answer in 25s. Screenshot & tell Cline.");
+        const t = w.addText("⚠️ 12 Years widget stalled — no answer in 25s. Please try again in a moment.");
         t.font = Font.boldSystemFont(11);
         t.textColor = new Color("#ffecec");
         present(w);

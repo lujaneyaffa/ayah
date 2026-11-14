@@ -11,7 +11,7 @@ const html = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ayah iPhone Widget — Setup</title>
+  <title>12 Years iPhone Widget — Setup</title>
   <style>
     :root { --accent: #22c55e; --ink: #1c2a24; --muted: #6b7f75; --line: #e2e8e5; }
     * { box-sizing: border-box; }
@@ -38,15 +38,15 @@ const html = `<!DOCTYPE html>
 </head>
 <body>
   <main>
-    <h1>📱 Ayah iPhone Widget</h1>
+    <h1>📱 12 Years iPhone Widget</h1>
     <p class="sub">A real, live home-screen widget showing the same daily ayah as your app — 100% free.</p>
 
     <ol>
       <li>Install the free app <strong>Scriptable</strong> from the App Store.</li>
       <li>Tap the button below to <strong>copy the widget code</strong>.</li>
-      <li>Open <strong>Scriptable</strong> → tap <code>+</code> (top right) → paste → name it <code>Ayah Widget</code> → tap the ▶ play button once (you should see a green preview).</li>
+      <li>Open <strong>Scriptable</strong> → tap <code>+</code> (top right) → paste → name it <code>12 Years Widget</code> → tap the ▶ play button once (you should see a green preview).</li>
       <li>Go to your Home Screen → long-press an empty spot → <code>+</code> → search <strong>Scriptable</strong> → pick a size (Medium looks best).</li>
-      <li>With the widget selected, tap it → set <strong>Script</strong> = <code>Ayah Widget</code> → tap outside → <strong>Done</strong>.</li>
+      <li>With the widget selected, tap it → set <strong>Script</strong> = <code>12 Years Widget</code> → tap outside → <strong>Done</strong>.</li>
     </ol>
 
     <button class="btn" id="copyBtn">📋 Copy widget code</button>

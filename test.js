@@ -336,11 +336,11 @@ console.log("\n--- Integration: verse loading pipeline ---");
     align([], []).accuracy === 0 && align([], []).total === 0);
 
   check("recitationVerdict: high accuracy reads as success",
-    /Great/.test(verdict(1)) && /Great/.test(verdict(0.95)));
+    /Beautiful/.test(verdict(1)) && /Beautiful/.test(verdict(0.95)));
   check("recitationVerdict: mid accuracy asks to check highlights",
-    /Almost/.test(verdict(0.7)));
+    /gentle look at the highlighted/.test(verdict(0.7)));
   check("recitationVerdict: low accuracy asks to practice again",
-    /practice/.test(verdict(0.2)));
+    /Try again/.test(verdict(0.2)) && !/fail|wrong|bad|should/i.test(verdict(0.2)));
 
   // --- Segmenting: cut on real pauses (v43) ---
   const findQuietCut = vm.runInContext("findQuietCutIndex", sandbox);
