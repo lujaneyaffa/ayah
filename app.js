@@ -145,7 +145,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v52"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v53"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -641,21 +641,33 @@ async function renderRead() {
       if (words && words.length) {
         // Word-per-span render so the recitation can light up each word
         dom.readArabic.textContent = "";
-        for (const w of words) {
+        words.forEach((w, i) => {
           const span = document.createElement("span");
           span.className = "qword";
           span.dataset.wpos = String(w.position);
           span.textContent = w.text;
-          dom.readArabic.appendChild(span);
-          dom.readArabic.appendChild(document.createTextNode(" "));
-        }
+          if (i < words.length - 1) {
+            dom.readArabic.appendChild(span);
+            dom.readArabic.appendChild(document.createTextNode(" "));
+          } else {
+            // The last word and the ayah number travel together, so the number
+            // can never end up alone on a line of its own.
+            const tail = document.createElement("span");
+            tail.className = "nowrap";
+            tail.appendChild(span);
+            tail.appendChild(document.createTextNode(" "));
+            dom.readArabic.appendChild(tail);
+          }
+        });
       } else {
-        dom.readArabic.textContent = data.ar;
+        dom.readArabic.textContent = data.ar + "\u00A0";
       }
       const badge = document.createElement("span");
       badge.className = "ayah-badge";
       badge.textContent = String(parseKey(key).ayah); // Western numerals
-      dom.readArabic.appendChild(badge);
+      (dom.readArabic.lastElementChild && dom.readArabic.lastElementChild.classList.contains("nowrap")
+        ? dom.readArabic.lastElementChild
+        : dom.readArabic).appendChild(badge);
     } else {
       dom.readArabic.textContent = "—";
     }
