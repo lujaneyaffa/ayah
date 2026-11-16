@@ -1,0 +1,3 @@
+Fraunces, Nunito and Amiri Quran are licensed under the SIL Open Font License 1.1
+(https://openfontlicense.org). Files from the Fontsource packages
+@fontsource-variable/fraunces, @fontsource-variable/nunito and @fontsource/amiri-quran.

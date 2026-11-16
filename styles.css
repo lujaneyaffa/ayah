@@ -1,46 +1,74 @@
-/* ===== Ayah — calm widget design ===== */
+/* ===== 12 Years — Warm Parchment: a quiet library, old paper, olive and gold ===== */
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("./fonts/fraunces-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nunito";
+  src: url("./fonts/nunito-latin-wght-normal.woff2") format("woff2");
+  font-weight: 200 1000;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Amiri Quran";
+  src: url("./fonts/amiri-quran-arabic-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
 
 :root {
-  --bg: #f7f5ef;
-  --card: #ffffff;
-  --ink: #1a211d;
-  --muted: #6b746e;
-  --line: #e4e0d4;
-  --accent: #0f5b3d;
-  --accent-soft: #e3efe8;
-  --word-hl: rgba(255, 209, 61, 0.92);
-  --star: #b8860b;
-  --danger: #a33;
+  --bg: #f6f0e3;
+  --card: #fffcf5;
+  --ink: #2d2a24;
+  --muted: #7a7468;
+  --line: #e5dcc8;
+  --accent: #4a6b3f;
+  --on-accent: #ffffff;
+  --accent-soft: #e6ecd9;
+  --word-hl: rgba(201, 162, 77, 0.5);
+  --star: #a07a2a;
+  --danger: #b5533c;
+  --on-danger: #ffffff;
   --radius: 20px;
-  --shadow: 0 10px 30px rgba(20, 40, 30, 0.08);
+  --shadow: 0 10px 30px rgba(70, 55, 30, 0.09);
+  --font-ui: "Nunito", ui-rounded, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-arabic: "Amiri Quran", "Noto Naskh Arabic", "Scheherazade New", "Traditional Arabic", serif;
   /* Per-ayah tint cycle (Check tab's page view) — soft enough not to fight
      the correct/missed word colors, distinct enough to see at a glance
      where one ayah ends and the next begins. */
-  --tint-0: #fbe9d6;
-  --tint-1: #dcecf7;
-  --tint-2: #ece2f7;
-  --tint-3: #ddf0e6;
-  --tint-4: #fbe1e6;
-  --tint-5: #f3f0d8;
+  --tint-0: #f3e6cf;
+  --tint-1: #e3ebd3;
+  --tint-2: #efe0d6;
+  --tint-3: #e6e4d0;
+  --tint-4: #f0dcd8;
+  --tint-5: #dde6e3;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1a16;
-    --card: #16241e;
-    --ink: #e9efe9;
-    --muted: #93a29a;
-    --line: #243a30;
-    --accent: #54c98f;
-    --accent-soft: #1c3a2c;
-    --word-hl: rgba(255, 209, 61, 0.3);
+    --bg: #1c1a15;
+    --card: #26231c;
+    --ink: #efe8d8;
+    --muted: #a39b8a;
+    --line: #3a352a;
+    --accent: #a5c48f;
+    --on-accent: #1c1a15;
+    --accent-soft: #2f3a27;
+    --word-hl: rgba(201, 162, 77, 0.35);
+    --star: #d9b866;
+    --danger: #e08a6b;
+    --on-danger: #1c1a15;
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-    --tint-0: #3a2f22;
-    --tint-1: #223138;
-    --tint-2: #2e2838;
-    --tint-3: #203830;
-    --tint-4: #3a2529;
-    --tint-5: #35331f;
+    --tint-0: #3a3024;
+    --tint-1: #2a3326;
+    --tint-2: #3b2d26;
+    --tint-3: #333022;
+    --tint-4: #38292a;
+    --tint-5: #243230;
   }
 }
 
@@ -53,7 +81,7 @@
 html, body { margin: 0; padding: 0; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-ui);
   background: var(--bg);
   color: var(--ink);
   min-height: 100vh;
@@ -87,7 +115,8 @@ body {
 }
 .logo { width: 34px; height: 34px; flex: 0 0 auto; }
 .logo svg { width: 100%; height: 100%; display: block; }
-.brand-name { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+.brand-name { font-family: var(--font-display); font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
+h1, h2, .surah-name, .mem-head h2 { font-family: var(--font-display); font-weight: 600; }
 .brand-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
 
 .install-btn {
@@ -151,7 +180,7 @@ body {
 }
 .tab.is-active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .tab-count {
   font-size: 11px;
@@ -199,7 +228,7 @@ main { display: block; }
   font-size: clamp(26px, 6vw, 36px);
   line-height: 1.9;
   text-align: center;
-  font-family: "Noto Naskh Arabic", "Amiri", "Scheherazade New", "Traditional Arabic", serif;
+  font-family: var(--font-arabic);
   margin: 6px 0 16px;
   overflow-wrap: anywhere;
 }
@@ -273,7 +302,7 @@ main { display: block; }
 .check-status { color: var(--muted); font-size: 0.9em; }
 .check-level { height: 6px; margin: 12px auto 0; max-width: 260px; background: var(--line); border-radius: 999px; overflow: hidden; }
 .check-level-fill { width: 0; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.08s linear; }
-#checkRecordBtn.is-recording { background-color: var(--danger); color: #fff; border-color: var(--danger); }
+#checkRecordBtn.is-recording { background-color: var(--danger); color: var(--on-danger); border-color: var(--danger); }
 /* Mistakes report shown after Stop & Check */
 .check-report {
   margin: 4px 0 12px;
@@ -296,7 +325,7 @@ main { display: block; }
 .cr-item.cr-close { border-inline-start-color: var(--star); }
 .cr-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--danger); }
 .cr-close .cr-tag { color: var(--star); }
-.cr-exp, .cr-heard { font-family: "Noto Naskh Arabic", "Amiri", "Scheherazade New", "Traditional Arabic", serif; font-size: 22px; line-height: 1.5; }
+.cr-exp, .cr-heard { font-family: var(--font-arabic); font-size: 22px; line-height: 1.5; }
 .cr-exp { color: var(--ink); }
 .cr-heard { color: var(--muted); }
 .cr-arrow { font-size: 12px; color: var(--muted); }
@@ -323,7 +352,7 @@ main { display: block; }
   border: 2px solid var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
   border-radius: 50%;
-  font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
   font-size: 0.72em;
   font-weight: 800;
   line-height: 1;
@@ -374,7 +403,7 @@ main { display: block; }
 .btn-toggle.is-on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .btn-toggle.is-on svg { fill: currentColor; }
 
@@ -455,7 +484,7 @@ main { display: block; }
   font-size: 13px;
   cursor: pointer;
 }
-.mem-subtab.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mem-subtab.is-active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .mem-list { max-height: 70vh; }
 .mem-page-reader .check-page-nav { margin-bottom: 10px; }
 .mem-page-legend {
@@ -690,7 +719,7 @@ main { display: block; }
   border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   display: grid; place-items: center;
   cursor: pointer;
 }
@@ -729,7 +758,7 @@ main { display: block; }
 .audio-toggle.is-on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 /* ===== Loop a range of ayahs (multi-ayah repeat) ===== */
 .loop-row {
