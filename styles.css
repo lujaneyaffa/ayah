@@ -248,7 +248,9 @@ main { display: block; }
    inline highlight, not its own block. */
 .mushaf-page {
   font-size: clamp(22px, 5.6vw, 32px);
-  line-height: 2.15;
+  /* Amiri Quran's tall marks make each ayah's highlight ~2.45em high, so the
+     line pitch must be at least that or neighbouring highlights overlap. */
+  line-height: 2.6;
   margin: 6px 0 0;
 }
 /* One row per ayah, natural word spacing, lines starting from the right (RTL
@@ -256,7 +258,7 @@ main { display: block; }
    with them) — natural spacing reads cleaner at phone width. */
 .ayah-row { text-align: start; }
 .ayah-group {
-  padding: 0.12em 0.2em;
+  padding: 0 0.2em;
   border-radius: 0.5em;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
